@@ -1,0 +1,21 @@
+{
+  "expo": {
+    "name": "addonez-client",
+    "slug": "addonez-client",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+
+    "ios": {},
+
+    "android": {
+      "predictiveBackGestureEnabled": false
+    },
+
+    "web": {},
+
+    "plugins": [
+      "expo-splash-screen"
+    ]
+  }
+}
