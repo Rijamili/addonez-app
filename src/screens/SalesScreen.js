@@ -1,36 +1,24 @@
 import React, { useEffect, useState } from "react";
-import {
-  View,
-  Text,
-  ScrollView,
-  StyleSheet,
-} from "react-native";
-
+import { View, Text, ScrollView, StyleSheet } from "react-native";
 import { LineChart } from "react-native-chart-kit";
 import { Dimensions } from "react-native";
+import api from "../services/api";  // ← ADD THIS
 
 const screenWidth = Dimensions.get("window").width;
 
 export default function SalesScreen() {
   const [orders, setOrders] = useState([]);
-const [monthlySales, setMonthlySales] = useState([]);
-  
+  const [monthlySales, setMonthlySales] = useState([]);
 
- useEffect(() => {
-  fetch("http://localhost:5000/api/odoo/sales")
-    .then((res) => res.json())
-    .then((data) => {
-      setOrders(data);
-    })
-    .catch((err) => console.log(err));
+  useEffect(() => {
+    api.get("/odoo/sales")
+      .then((res) => setOrders(res.data))
+      .catch((err) => console.log(err));
 
-  fetch("http://localhost:5000/api/odoo/monthly-sales")
-    .then((res) => res.json())
-    .then((data) => {
-      setMonthlySales(data);
-    })
-    .catch((err) => console.log(err));
-}, []);
+    api.get("/odoo/monthly-sales")
+      .then((res) => setMonthlySales(res.data))
+      .catch((err) => console.log(err));
+  }, []);
 
   const totalSales = orders.reduce(
     (sum, item) => sum + Number(item.amount_total),
@@ -65,34 +53,29 @@ const [monthlySales, setMonthlySales] = useState([]);
           Sales Trend
         </Text>
 
-        <LineChart
-          data={{
-  labels: monthlySales.map(
-    (item) => item.month
-  ),
-  datasets: [
-    {
-      data: monthlySales.map(
-        (item) => item.amount
-      ),
-    },
-  ],
-}}
-          width={screenWidth - 40}
-          height={220}
-          chartConfig={{
-            backgroundGradientFrom: "#fff",
-            backgroundGradientTo: "#fff",
-            decimalPlaces: 0,
-            color: () => "#0A8F8F",
-            labelColor: () => "#666",
-          }}
-          bezier
-          style={{
-            borderRadius: 12,
-            marginTop: 10,
-          }}
-        />
+        {monthlySales.length > 0 ? (
+  <LineChart
+    data={{
+      labels: monthlySales.map((item) => item.month),
+      datasets: [{ data: monthlySales.map((item) => item.amount) }],
+    }}
+    width={screenWidth - 40}
+    height={220}
+    chartConfig={{
+      backgroundGradientFrom: "#fff",
+      backgroundGradientTo: "#fff",
+      decimalPlaces: 0,
+      color: () => "#0A8F8F",
+      labelColor: () => "#666",
+    }}
+    bezier
+    style={{ borderRadius: 12, marginTop: 10 }}
+  />
+) : (
+  <Text style={{ textAlign: "center", color: "#999", marginTop: 20 }}>
+    Loading chart...
+  </Text>
+)}
       </View>
 
       {/* Top Orders */}

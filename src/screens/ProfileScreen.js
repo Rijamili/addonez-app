@@ -1,3 +1,4 @@
+import api from "../services/api";
 import React, { useState, useEffect } from "react";
 import * as ImagePicker from "expo-image-picker";
 import {
@@ -13,9 +14,7 @@ import { useNavigation } from "@react-navigation/native";
 
 export default function ProfileScreen() {
   const navigation = useNavigation();
-
   const [profileImage, setProfileImage] = useState(null);
-
   const [user, setUser] = useState({
     name: "",
     email: "",
@@ -23,14 +22,9 @@ export default function ProfileScreen() {
   });
 
   useEffect(() => {
-    fetch("http://localhost:5000/api/odoo/profile")
-      .then((res) => res.json())
-      .then((data) => {
-        setUser(data);
-      })
-      .catch((err) => {
-        console.log(err);
-      });
+    api.get("/odoo/profile")
+      .then((res) => setUser(res.data))
+      .catch((err) => console.log(err));
   }, []);
 
   const pickImage = async () => {
@@ -61,44 +55,29 @@ export default function ProfileScreen() {
             source={
               profileImage
                 ? { uri: profileImage }
-                : {
-                    uri: "https://cdn-icons-png.flaticon.com/512/149/149071.png",
-                  }
+                : { uri: "https://cdn-icons-png.flaticon.com/512/149/149071.png" }
             }
             style={styles.avatar}
           />
         </TouchableOpacity>
 
-        <Text style={styles.changePhoto}>
-          Tap profile photo to change
-        </Text>
-
-        <Text style={styles.name}>
-          {user.name || "Loading..."}
-        </Text>
-
-        <Text style={styles.email}>
-          {user.email || "Loading..."}
-        </Text>
-
-        <Text style={styles.role}>
-          Odoo User
-        </Text>
+        <Text style={styles.changePhoto}>Tap profile photo to change</Text>
+        <Text style={styles.name}>{user.name || "Loading..."}</Text>
+        <Text style={styles.email}>{user.email || "Loading..."}</Text>
+        <Text style={styles.role}>Odoo User</Text>
       </View>
 
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>
-          Account Information
-        </Text>
+        <Text style={styles.sectionTitle}>Account Information</Text>
 
         <View style={styles.item}>
           <Text style={styles.label}>Company</Text>
-          <Text>{user.company}</Text>
+          <Text>{user.company || "—"}</Text>
         </View>
 
         <View style={styles.item}>
           <Text style={styles.label}>Email</Text>
-          <Text>{user.email}</Text>
+          <Text>{user.email || "—"}</Text>
         </View>
 
         <View style={styles.item}>
@@ -108,66 +87,39 @@ export default function ProfileScreen() {
       </View>
 
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>
-          Settings
-        </Text>
+        <Text style={styles.sectionTitle}>Settings</Text>
 
         <TouchableOpacity
           style={styles.menuItem}
-          onPress={() =>
-            Alert.alert(
-              "Notifications",
-              "Notifications Settings"
-            )
-          }
+          onPress={() => Alert.alert("Notifications", "Notifications Settings")}
         >
-          <Text>Notifications</Text>
+          <Text style={styles.menuText}>Notifications</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={styles.menuItem}
-          onPress={() =>
-            Alert.alert(
-              "Security",
-              "Security Settings"
-            )
-          }
+          onPress={() => Alert.alert("Security", "Security Settings")}
         >
-          <Text>Security</Text>
+          <Text style={styles.menuText}>Security</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={styles.menuItem}
-          onPress={() =>
-            Alert.alert(
-              "ERP Preferences",
-              "ERP Preferences"
-            )
-          }
+          onPress={() => Alert.alert("ERP Preferences", "ERP Preferences")}
         >
-          <Text>ERP Preferences</Text>
+          <Text style={styles.menuText}>ERP Preferences</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={styles.menuItem}
-          onPress={() =>
-            Alert.alert(
-              "Help & Support",
-              "Help & Support"
-            )
-          }
+          style={[styles.menuItem, { borderBottomWidth: 0 }]}
+          onPress={() => Alert.alert("Help & Support", "Help & Support")}
         >
-          <Text>Help & Support</Text>
+          <Text style={styles.menuText}>Help & Support</Text>
         </TouchableOpacity>
       </View>
 
-      <TouchableOpacity
-        style={styles.logoutBtn}
-        onPress={handleLogout}
-      >
-        <Text style={styles.logoutText}>
-          Logout
-        </Text>
+      <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
+        <Text style={styles.logoutText}>Logout</Text>
       </TouchableOpacity>
     </ScrollView>
   );
@@ -178,14 +130,12 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#F6F7FB",
   },
-
   profileCard: {
     backgroundColor: "#fff",
     alignItems: "center",
     padding: 25,
     marginBottom: 15,
   },
-
   avatar: {
     width: 120,
     height: 120,
@@ -193,67 +143,62 @@ const styles = StyleSheet.create({
     borderWidth: 3,
     borderColor: "#0A8F8F",
   },
-
   changePhoto: {
     marginTop: 10,
     color: "#0A8F8F",
     fontSize: 13,
   },
-
   name: {
     fontSize: 22,
     fontWeight: "bold",
     marginTop: 10,
   },
-
   email: {
     color: "#666",
     marginTop: 5,
   },
-
   role: {
     color: "#0A8F8F",
     marginTop: 5,
     fontWeight: "600",
   },
-
   section: {
     backgroundColor: "#fff",
     marginBottom: 15,
     padding: 15,
   },
-
   sectionTitle: {
     fontSize: 18,
     fontWeight: "bold",
     marginBottom: 15,
   },
-
   item: {
     marginBottom: 12,
   },
-
   label: {
     color: "#666",
     marginBottom: 3,
   },
-
   menuItem: {
     paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: "#eee",
   },
-
+  menuText: {
+    fontSize: 15,
+    color: "#333",
+  },
   logoutBtn: {
     backgroundColor: "#E53935",
     margin: 15,
     padding: 15,
     borderRadius: 10,
+    marginBottom: 30,
   },
-
   logoutText: {
     color: "#fff",
     textAlign: "center",
     fontWeight: "bold",
+    fontSize: 16,
   },
 });
