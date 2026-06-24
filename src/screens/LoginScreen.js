@@ -32,10 +32,12 @@ export default function LoginScreen() {
   } catch (error) {
     console.log("ERROR:", error.response?.data);
 
-    Alert.alert(
-      "Error",
-      JSON.stringify(error.response?.data)
-    );
+   Alert.alert(
+  "Login Failed",
+  error.response?.data?.message ||
+  error.message ||
+  "Cannot connect to server"
+);
   }
 };
   return (

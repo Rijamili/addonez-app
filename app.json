@@ -5,17 +5,19 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
-
     "ios": {},
-
     "android": {
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.addonezclient"
     },
-
     "web": {},
-
     "plugins": [
       "expo-splash-screen"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "5bff8e8f-e875-40d9-a2be-19cd10af2dcc"
+      }
+    }
   }
 }

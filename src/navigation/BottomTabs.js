@@ -8,6 +8,7 @@ import FinanceScreen from "../screens/FinanceScreen";
 import AnalyticsScreen from "../screens/AnalyticsScreen";
 import PredictionsScreen from "../screens/PredictionsScreen";
 import ProfileScreen from "../screens/ProfileScreen";
+import AIInsightsScreen from "../screens/AIInsightsScreen";
 
 const Tab = createBottomTabNavigator();
 
@@ -44,11 +45,18 @@ export default function BottomTabs() {
         name="Predictions"
         component={PredictionsScreen}
       />
+       
 
+        <Tab.Screen
+  name="AI Insights"
+  component={AIInsightsScreen}
+/>
       <Tab.Screen
         name="Profile"
         component={ProfileScreen}
       />
+
+     
 
     </Tab.Navigator>
   );

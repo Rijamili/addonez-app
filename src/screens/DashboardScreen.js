@@ -1,92 +1,101 @@
 import React, { useEffect, useState } from "react";
 import {
   View,
- Text,
+  Text,
   ScrollView,
   StyleSheet,
   Dimensions,
 } from "react-native";
 import { LineChart } from "react-native-chart-kit";
+import { API_URL } from "../config/api";
 
 const screenWidth = Dimensions.get("window").width;
 
 export default function DashboardScreen() {
-  const [totalOrders, setTotalOrders] = useState(0);
-  const [quotations, setQuotations] = useState(0);
-  const [monthlySales, setMonthlySales] = useState([]);
-  const [revenue, setRevenue] = useState(0);
-  const [orders, setOrders] = useState([]);
- const [status, setStatus] = useState("Disconnected");
+  const [dashboard, setDashboard] = useState({
+    totalRevenue: 0,
+    totalOrders: 0,
+    quotations: 0,
+  });
+
   const [user, setUser] = useState({
     name: "",
   });
-  
+
+  const [orders, setOrders] = useState([]);
+  const [monthlySales, setMonthlySales] = useState([]);
+  const [status, setStatus] = useState("Disconnected");
 
   useEffect(() => {
-    fetch("http://localhost:5000/api/odoo/dashboard")
-      .then((res) => res.json())
-      .then((data) => {
-        setTotalOrders(data.totalOrders || 0);
-        setQuotations(data.quotations || 0);
-        setRevenue(data.totalRevenue || 0);
-      })
-      .catch((err) => console.log(err));
+    loadDashboard();
+    loadProfile();
+    loadSales();
+    loadMonthlySales();
   }, []);
 
-  useEffect(() => {
-    fetch("http://localhost:5000/api/odoo/sales")
-      .then((res) => res.json())
-      .then((data) => {
-        setOrders(data);
-      })
-      .catch((err) => console.log(err));
-  }, []);
+  const loadDashboard = async () => {
+    try {
+      const res = await fetch(
+        `${API_URL}/odoo/dashboard`
+      );
 
-  useEffect(() => {
-    fetch("http://localhost:5000/api/odoo/profile")
-      .then((res) => res.json())
-      .then((data) => {
-        setUser(data);
-      })
-      .catch((err) => console.log(err));
-  }, []);
+      const data = await res.json();
 
-  useEffect(() => {
-  fetch("http://localhost:5000/api/odoo/monthly-sales")
-    .then((res) => res.json())
-    .then((data) => {
-      setMonthlySales(data);
-    })
-    .catch((err) => console.log(err));
-}, []);
-useEffect(() => {
-  fetch("http://localhost:5000/api/odoo/dashboard")
-    .then((res) => res.json())
-    .then(() => {
+      setDashboard(data);
       setStatus("Connected");
-    })
-    .catch(() => {
+    } catch (error) {
+      console.log(error);
       setStatus("Disconnected");
-    });
-}, []);
+    }
+  };
+
+  const loadProfile = async () => {
+    try {
+      const res = await fetch(
+        `${API_URL}/odoo/profile`
+      );
+
+      const data = await res.json();
+
+      setUser(data);
+    } catch (error) {
+      console.log(error);
+    }
+  };
+
+  const loadSales = async () => {
+    try {
+      const res = await fetch(
+        `${API_URL}/odoo/sales`
+      );
+
+      const data = await res.json();
+
+      setOrders(data);
+    } catch (error) {
+      console.log(error);
+    }
+  };
+
+  const loadMonthlySales = async () => {
+    try {
+      const res = await fetch(
+        `${API_URL}/odoo/monthly-sales`
+      );
+
+      const data = await res.json();
+
+      setMonthlySales(data);
+    } catch (error) {
+      console.log(error);
+    }
+  };
+
   return (
     <ScrollView style={styles.container}>
-      <View
-        style={{
-          flexDirection: "row",
-          alignItems: "center",
-          marginBottom: 15,
-        }}
-      >
-        <Text
-          style={[
-            styles.greeting,
-            { marginLeft: 15 },
-          ]}
-        >
-          Hello, {user.name}  👋
-        </Text>
-      </View>
+      <Text style={styles.greeting}>
+        Hello, {user.name || "Odoo User"} 👋
+      </Text>
 
       <Text style={styles.subTitle}>
         Here's your business overview
@@ -99,9 +108,10 @@ useEffect(() => {
           </Text>
 
           <Text style={styles.cardValue}>
-           ₹{Number(revenue).toLocaleString("en-IN", {
-  minimumFractionDigits: 2,
-})}
+            ₹
+            {Number(
+              dashboard.totalRevenue || 0
+            ).toLocaleString("en-IN")}
           </Text>
         </View>
 
@@ -111,7 +121,7 @@ useEffect(() => {
           </Text>
 
           <Text style={styles.cardValue}>
-            {totalOrders}
+            {dashboard.totalOrders || 0}
           </Text>
         </View>
       </View>
@@ -123,7 +133,7 @@ useEffect(() => {
           </Text>
 
           <Text style={styles.cardValue}>
-            {quotations}
+            {dashboard.quotations || 0}
           </Text>
         </View>
 
@@ -133,8 +143,8 @@ useEffect(() => {
           </Text>
 
           <Text style={styles.cardValue}>
-  {status}
-</Text>
+            {status}
+          </Text>
         </View>
       </View>
 
@@ -143,34 +153,38 @@ useEffect(() => {
           Monthly Sales
         </Text>
 
-        <LineChart
-          data={{
-          labels: monthlySales.map(
-  (item) => item.month
-),
-            datasets: [
-              {
-                data: monthlySales.map(
-  (item) => item.amount
-),
-              },
-            ],
-          }}
-          width={screenWidth - 60}
-          height={220}
-          chartConfig={{
-            backgroundGradientFrom: "#ffffff",
-            backgroundGradientTo: "#ffffff",
-            decimalPlaces: 0,
-            color: () => "#0A8F8F",
-            labelColor: () => "#666",
-          }}
-          bezier
-          style={{
-            marginTop: 10,
-            borderRadius: 10,
-          }}
-        />
+        {monthlySales.length > 0 && (
+          <LineChart
+            data={{
+              labels: monthlySales.map(
+                (item) => item.month
+              ),
+              datasets: [
+                {
+                  data: monthlySales.map(
+                    (item) =>
+                      Number(item.amount || 0)
+                  ),
+                },
+              ],
+            }}
+            width={screenWidth - 40}
+            height={220}
+            fromZero
+            chartConfig={{
+              backgroundGradientFrom:
+                "#ffffff",
+              backgroundGradientTo:
+                "#ffffff",
+              decimalPlaces: 0,
+              color: (opacity = 1) =>
+                `rgba(10,143,143,${opacity})`,
+              labelColor: (opacity = 1) =>
+                `rgba(0,0,0,${opacity})`,
+            }}
+            bezier
+          />
+        )}
       </View>
 
       <View style={styles.orderCard}>
@@ -180,7 +194,7 @@ useEffect(() => {
           </Text>
 
           <Text style={styles.viewAll}>
-            Live Data
+            Live Odoo Data
           </Text>
         </View>
 
@@ -192,7 +206,10 @@ useEffect(() => {
             <Text>{item.name}</Text>
 
             <Text>
-              ₹{item.amount_total}
+              ₹
+              {Number(
+                item.amount_total || 0
+              ).toFixed(2)}
             </Text>
           </View>
         ))}
@@ -211,6 +228,7 @@ const styles = StyleSheet.create({
   greeting: {
     fontSize: 24,
     fontWeight: "bold",
+    marginBottom: 5,
   },
 
   subTitle: {
@@ -236,7 +254,7 @@ const styles = StyleSheet.create({
   },
 
   cardValue: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: "bold",
     marginTop: 5,
   },
@@ -264,6 +282,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 18,
     fontWeight: "bold",
+    marginBottom: 10,
   },
 
   viewAll: {
