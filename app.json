@@ -8,7 +8,8 @@
     "ios": {},
     "android": {
       "predictiveBackGestureEnabled": false,
-      "package": "com.addonezclient"
+      "package": "com.addonezclient",
+      "usesCleartextTraffic": true
     },
     "web": {},
     "plugins": [

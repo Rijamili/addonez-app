@@ -30,15 +30,15 @@ export default function LoginScreen() {
     navigation.replace("Home");
 
   } catch (error) {
-    console.log("ERROR:", error.response?.data);
+  console.log("ERROR:", error);
+  console.log("MESSAGE:", error.message);
+  console.log("RESPONSE:", error.response?.data);
 
-   Alert.alert(
-  "Login Failed",
-  error.response?.data?.message ||
-  error.message ||
-  "Cannot connect to server"
-);
-  }
+  Alert.alert(
+    "Login Error",
+    error.message || "Unknown Error"
+  );
+}
 };
   return (
     <View style={styles.container}>
