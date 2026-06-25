@@ -36,7 +36,7 @@ router.get("/finance", asyncRoute(async (req, res) => {
 
   const fetchMoves = (moveType) =>
     odoo.execute(req, uid, "account.move", "search_read",
-      [[["move_type", "=", moveType], ["state", "=", "posted"]]]],
+      [[["move_type", "=", moveType], ["state", "=", "posted"]]],
       { fields: ["name", "amount_total", "payment_state", "invoice_date", "move_type"], limit: 200 }
     );
 
@@ -134,4 +134,6 @@ router.get("/monthly-sales", asyncRoute(async (req, res) => {
 }));
 
 module.exports = router;
+
+
 
