@@ -1,39 +1,60 @@
-// src/controllers/authController.js
+const odoo              = require("../config/OdooService");
+const OdooConfigService = require("../config/OdooConfigService");
+const { generateToken } = require("../utils/jwt");
+const { success, error } = require("../utils/response");
 
-const odoo = require("../config/odooClient");
-
-const login = (req, res) => {
+const login = async (req, res) => {
   const { email, password } = req.body;
-
-  // Validate credentials against the Odoo instance from headers
-  const { common, db } = odoo.resolveConfig(req);
-
-  common.methodCall("authenticate", [db, email, password, {}], (err, uid) => {
-    if (err)  return res.status(500).json({ success: false, message: "Authentication Error" });
-    if (!uid) return res.status(401).json({ success: false, message: "Invalid Odoo Credentials" });
-    return res.status(200).json({ success: true, message: "Login Successful", uid });
-  });
-};
-
-const forgotPassword = async (req, res) => {
-  const { email } = req.body;
-  if (!email) return res.status(400).json({ success: false, message: "Email is required." });
-
   try {
-    const uid   = await odoo.authenticate(req);
-    const users = await odoo.execute(req, uid, "res.users", "search_read",
-      [[[["login", "=", email]]]], { fields: ["id"], limit: 1 });
+    const uid  = await odoo.authenticateUser(email, password);
+    const user = await odoo.getUserByEmail(email);
+    if (!user) return error(res, "User not found.", 404);
 
-    if (!users || users.length === 0) {
-      return res.json({ success: true, message: "If this email is registered, a reset link has been sent." });
-    }
+    const role  = (user.groups_id?.length || 0) > 5 ? "admin" : "user";
+    const token = await generateToken({
+      uid,
+      odooUserId: user.id,
+      email:      user.login,
+      name:       user.name,
+      role,
+      partnerId:  user.partner_id?.[0],
+    });
 
-    await odoo.execute(req, uid, "res.users", "action_reset_password", [[users[0].id]], {});
-    return res.json({ success: true, message: "Password reset email sent successfully." });
+    return success(res, {
+      token,
+      user: { id: user.id, name: user.name, email: user.login, role },
+    }, "Login successful");
   } catch (err) {
-    console.error("Forgot password error:", err.message);
-    return res.status(500).json({ success: false, message: "Failed to send reset email. Please try again." });
+    return error(res, err.message, 401);
   }
 };
 
-module.exports = { login, forgotPassword };
+const forgotPassword = async (req, res) => {
+  try {
+    const user = await odoo.getUserByEmail(req.body.email);
+    if (user) await odoo.execute("res.users", "action_reset_password", [[user.id]]);
+    return success(res, null, "If this email exists, a reset link has been sent.");
+  } catch {
+    return success(res, null, "If this email exists, a reset link has been sent.");
+  }
+};
+
+const getMe = async (req, res) => {
+  try {
+    const user = await odoo.read("res.users", [req.user.odooUserId], ["name", "login"]);
+    return success(res, user[0]);
+  } catch (err) {
+    return error(res, err.message);
+  }
+};
+
+const refreshConfig = async (req, res) => {
+  try {
+    const cfg = await OdooConfigService.refresh();
+    return success(res, { host: cfg.odoo.host, db: cfg.odoo.db }, "Config refreshed from Odoo.");
+  } catch (err) {
+    return error(res, "Failed to refresh config: " + err.message);
+  }
+};
+
+module.exports = { login, forgotPassword, getMe, refreshConfig };
