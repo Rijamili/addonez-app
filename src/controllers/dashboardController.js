@@ -5,7 +5,7 @@ exports.getDashboard = async (req, res) => {
   const { uid, partnerId } = req.user;
   try {
     const [orders, quotations, allOrders, invoices, projects, tasks] = await Promise.all([
-      odoo.searchCount("sale.order",       [["user_id.id", "=", uid], ["state", "in", ["sale", "done"]]]),
+      odoo.searchCount("sale.order",     [["state", "in", ["sale", "done"]]]),
       odoo.searchCount("sale.order",       [["user_id.id", "=", uid], ["state", "=", "draft"]]),
       odoo.searchRead( "sale.order",       [["user_id.id", "=", uid]], ["amount_total"]),
       odoo.searchCount("account.move",     [["partner_id", "=", partnerId], ["move_type", "=", "out_invoice"], ["state", "=", "posted"]]),

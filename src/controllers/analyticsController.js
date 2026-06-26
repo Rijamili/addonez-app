@@ -4,7 +4,7 @@ const { success, error } = require("../utils/response");
 exports.getAnalytics = async (req, res) => {
   const { uid } = req.user;
   try {
-    const sales = await odoo.searchRead("sale.order", [["user_id.id", "=", uid]], ["amount_total"]);
+    const sales = await odoo.searchRead("sale.order", [], ["amount_total"]);
     const total = sales.reduce((s, o) => s + Number(o.amount_total || 0), 0);
     return success(res, { totalRevenue: total, totalOrders: sales.length });
   } catch (err) {

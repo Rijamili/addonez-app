@@ -18,7 +18,7 @@ exports.getTasks = async (req, res) => {
   const { uid } = req.user;
   try {
     const tasks = await odoo.searchRead(
-      "project.task", [["user_ids.id", "=", uid]],
+      "project.task", [],
       ["name", "project_id", "stage_id", "date_deadline", "priority"], 50
     );
     return success(res, tasks);
