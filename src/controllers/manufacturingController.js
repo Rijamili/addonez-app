@@ -140,6 +140,38 @@ exports.getInventory = async (req, res) => {
 };
 
 // GET /api/manufacturing/quality
+// exports.getQuality = async (req, res) => {
+//   try {
+//     let checks = [];
+//     try {
+//       checks = await odoo.searchRead(
+//         "quality.check",
+//         [],
+//         ["name", "quality_state", "product_id", "control_date"],
+//         200
+//       );
+//     } catch (e) {
+//       return success(res, { installed: false, passed: 0, failed: 0, checks: [] });
+//     }
+
+//     const passed = checks.filter((c) => c.quality_state === "pass").length;
+//     const failed = checks.filter((c) => c.quality_state === "fail").length;
+
+//     return success(res, {
+//       installed: true,
+//       passed,
+//       failed,
+//       checks: checks.map((c) => ({
+//         name:    c.name,
+//         product: c.product_id?.[1] || "",
+//         state:   c.quality_state,
+//         date:    c.control_date,
+//       })),
+//     });
+//   } catch (err) {
+//     return error(res, err.message);
+//   }
+// };
 exports.getQuality = async (req, res) => {
   try {
     let checks = [];
@@ -151,7 +183,23 @@ exports.getQuality = async (req, res) => {
         200
       );
     } catch (e) {
-      return success(res, { installed: false, passed: 0, failed: 0, checks: [] });
+      checks = [];
+    }
+
+    if (checks.length === 0) {
+      // DEMO DATA — Quality app isn't installed/has no checks yet.
+      // Remove this block once real quality checks exist in Odoo.
+      return success(res, {
+        installed: true,
+        passed: 42,
+        failed: 3,
+        checks: [
+          { name: "QC/001", product: "Nandini Milk 1L",  state: "pass", date: "2026-06-28" },
+          { name: "QC/002", product: "Thara Coffee 250g", state: "pass", date: "2026-06-27" },
+          { name: "QC/003", product: "ERP Packaging Kit", state: "fail", date: "2026-06-25" },
+          { name: "QC/004", product: "Nandini Milk 1L",  state: "pass", date: "2026-06-24" },
+        ],
+      });
     }
 
     const passed = checks.filter((c) => c.quality_state === "pass").length;
@@ -172,7 +220,6 @@ exports.getQuality = async (req, res) => {
     return error(res, err.message);
   }
 };
-
 // GET /api/manufacturing/procurement
 exports.getProcurement = async (req, res) => {
   try {
@@ -196,6 +243,34 @@ exports.getProcurement = async (req, res) => {
 };
 
 // GET /api/manufacturing/maintenance
+// exports.getMaintenance = async (req, res) => {
+//   try {
+//     let requests = [];
+//     try {
+//       requests = await odoo.searchRead(
+//         "maintenance.request",
+//         [],
+//         ["name", "equipment_id", "stage_id", "request_date", "schedule_date"],
+//         200
+//       );
+//     } catch (e) {
+//       return success(res, { installed: false, items: [] });
+//     }
+
+//     return success(res, {
+//       installed: true,
+//       items: requests.map((r) => ({
+//         name:        r.name,
+//         equipment:   r.equipment_id?.[1] || "",
+//         stage:       r.stage_id?.[1] || "",
+//         requestedAt: r.request_date,
+//         scheduledAt: r.schedule_date,
+//       })),
+//     });
+//   } catch (err) {
+//     return error(res, err.message);
+//   }
+// };
 exports.getMaintenance = async (req, res) => {
   try {
     let requests = [];
@@ -207,7 +282,20 @@ exports.getMaintenance = async (req, res) => {
         200
       );
     } catch (e) {
-      return success(res, { installed: false, items: [] });
+      requests = [];
+    }
+
+    if (requests.length === 0) {
+      // DEMO DATA — Maintenance app isn't installed/has no requests yet.
+      // Remove this block once real maintenance requests exist in Odoo.
+      return success(res, {
+        installed: true,
+        items: [
+          { name: "MR/001", equipment: "Filling Machine A",  stage: "In progress", requestedAt: "2026-06-26", scheduledAt: "2026-07-02" },
+          { name: "MR/002", equipment: "Conveyor Belt 2",    stage: "Scheduled",   requestedAt: "2026-06-29", scheduledAt: "2026-07-05" },
+          { name: "MR/003", equipment: "Packaging Sealer",   stage: "Completed",   requestedAt: "2026-06-18", scheduledAt: "2026-06-20" },
+        ],
+      });
     }
 
     return success(res, {
@@ -226,6 +314,32 @@ exports.getMaintenance = async (req, res) => {
 };
 
 // GET /api/manufacturing/workforce
+// exports.getWorkforce = async (req, res) => {
+//   try {
+//     let employees = [];
+//     try {
+//       employees = await odoo.searchRead(
+//         "hr.employee",
+//         [["department_id.name", "ilike", "manufactur"]],
+//         ["name", "job_title", "department_id"],
+//         100
+//       );
+//     } catch (e) {
+//       return success(res, { installed: false, employees: [] });
+//     }
+
+//     return success(res, {
+//       installed: true,
+//       employees: employees.map((e) => ({
+//         name:       e.name,
+//         jobTitle:   e.job_title || "",
+//         department: e.department_id?.[1] || "",
+//       })),
+//     });
+//   } catch (err) {
+//     return error(res, err.message);
+//   }
+// };
 exports.getWorkforce = async (req, res) => {
   try {
     let employees = [];
@@ -237,7 +351,21 @@ exports.getWorkforce = async (req, res) => {
         100
       );
     } catch (e) {
-      return success(res, { installed: false, employees: [] });
+      employees = [];
+    }
+
+    if (employees.length === 0) {
+      // DEMO DATA — no HR employees tagged to a manufacturing department yet.
+      // Remove this block once real employee records exist in Odoo.
+      return success(res, {
+        installed: true,
+        employees: [
+          { name: "Arun Kumar",   jobTitle: "Production Supervisor", department: "Manufacturing" },
+          { name: "Priya Singh",  jobTitle: "Machine Operator",      department: "Manufacturing" },
+          { name: "Ravi Shankar", jobTitle: "Quality Inspector",     department: "Manufacturing" },
+          { name: "Meena Joshi",  jobTitle: "Packaging Lead",        department: "Manufacturing" },
+        ],
+      });
     }
 
     return success(res, {
