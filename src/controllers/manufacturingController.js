@@ -29,7 +29,7 @@ exports.getManufacturingSummary = async (req, res) => {
         todaysProduction: unitsToday,
         ordersInProgress: inProgress.length,
         machineUtilization,
-        qualityScore: 96,
+        qualityScore: await getQualityScore(),
       },
       reportGroups: [
         { key: "production",    label: "Production" },
@@ -362,7 +362,7 @@ exports.getExecutiveDashboard = async (req, res) => {
       delayedOrders: delayed.length,
       machineUtilization: utilization,
       lowStockCount: lowStock.length,
-      qualityScore: 96,
+      qualityScore: await getQualityScore(),
     });
   } catch (err) {
     return error(res, err.message);
