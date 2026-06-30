@@ -28,6 +28,7 @@ async function getPostedLedger(startDate) {
 
   return { accountById, lines };
 }
+
 // GET /api/accounts
 exports.getAccountsSummary = async (req, res) => {
   try {
@@ -43,8 +44,6 @@ exports.getAccountsSummary = async (req, res) => {
     const totalExpenses = purchases.reduce((s, r) => s + Number(r.amount_total || 0), 0);
     const netProfit      = totalRevenue - totalExpenses;
 
-    // Real cash balance: sum of balance (debit - credit) across every
-    // account whose account_type is "asset_cash".
     const cashBalance = lines.reduce((sum, line) => {
       const acc = accountById[line.account_id?.[0]];
       if (acc?.account_type === "asset_cash") {
@@ -87,10 +86,11 @@ exports.getProfitAndLoss = async (req, res) => {
 
     const base = [["state", "=", "posted"], ["invoice_date", ">=", startDateStr]];
 
-    const [sales, purchases, { accountById, lines }] = await Promise.all([
+    const [sales, purchases, { accountById, lines }, allSalesEver] = await Promise.all([
       odoo.searchRead("account.move", [...base, ["move_type", "=", "out_invoice"]], ["amount_total", "invoice_date"], 1000),
       odoo.searchRead("account.move", [...base, ["move_type", "=", "in_invoice"]], ["amount_total", "invoice_date"], 1000),
       getPostedLedger(startDateStr),
+      odoo.searchRead("account.move", [["state", "=", "posted"], ["move_type", "=", "out_invoice"]], ["amount_total", "invoice_date"], 1000),
     ]);
 
     const salesRevenue = sales.reduce((s, r) => s + Number(r.amount_total || 0), 0);
@@ -147,11 +147,18 @@ exports.getProfitAndLoss = async (req, res) => {
         total: totalExpenses,
       },
       netProfit,
+      debug: {
+        startDateUsed: startDateStr,
+        invoicesInPeriod: sales.length,
+        invoicesEverPosted: allSalesEver.length,
+        allInvoiceDates: allSalesEver.map((s) => s.invoice_date),
+      },
     });
   } catch (err) {
     return error(res, err.message);
   }
 };
+
 // GET /api/accounts/balance-sheet
 exports.getBalanceSheet = async (req, res) => {
   try {
@@ -224,9 +231,6 @@ exports.getCashFlow = async (req, res) => {
     const cashPaidSuppliers = purchases.reduce((s, r) => s + Number(r.amount_total || 0), 0);
     const operating         = cashFromSales - cashPaidSuppliers;
 
-    // Investing and financing activity isn't separately tracked yet —
-    // genuinely 0 until fixed-asset purchases/loans are modeled, not
-    // a placeholder masking missing logic.
     const investing = 0;
     const financing = 0;
     const netChange = operating + investing + financing;
