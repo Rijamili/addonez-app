@@ -55,7 +55,7 @@ exports.getProduction = async (req, res) => {
     const orders = await odoo.searchRead(
       "mrp.production",
       [],
-      ["name", "product_id", "product_qty", "qty_produced", "state", "date_planned_start", "date_finished"],
+      ["name", "product_id", "product_qty", "qty_produced", "state", "date_deadline", "date_finished"],
       200
     );
     return success(res, orders.map((o) => ({
@@ -64,7 +64,7 @@ exports.getProduction = async (req, res) => {
       planned:     Number(o.product_qty || 0),
       produced:    Number(o.qty_produced || 0),
       state:       o.state,
-      plannedDate: o.date_planned_start,
+      deadline:    o.date_deadline,
       finishedDate: o.date_finished,
     })));
   } catch (err) {
@@ -78,7 +78,7 @@ exports.getWorkOrders = async (req, res) => {
     const orders = await odoo.searchRead(
       "mrp.production",
       [],
-      ["name", "product_id", "product_qty", "state", "date_planned_start", "date_deadline"],
+      ["name", "product_id", "product_qty", "state", "date_deadline"],
       200
     );
     return success(res, orders.map((o) => ({
@@ -86,7 +86,6 @@ exports.getWorkOrders = async (req, res) => {
       product:  o.product_id?.[1] || "",
       quantity: Number(o.product_qty || 0),
       state:    o.state,
-      planned:  o.date_planned_start,
       deadline: o.date_deadline,
     })));
   } catch (err) {
@@ -285,7 +284,7 @@ exports.getAiPredictive = async (req, res) => {
     const orders = await odoo.searchRead(
       "mrp.production",
       [["state", "in", ["confirmed", "progress"]]],
-      ["name", "date_planned_start", "date_deadline", "product_qty", "qty_produced"],
+      ["name", "date_deadline", "product_qty", "qty_produced"],
       300
     );
 
