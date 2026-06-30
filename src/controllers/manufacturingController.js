@@ -1,11 +1,25 @@
 const odoo = require("../config/OdooService");
 const { success, error } = require("../utils/response");
 
+// Shared helper: returns the real pass rate from quality.check, or null
+// if the Quality app isn't installed / has no checks logged yet.
+async function getQualityScore() {
+  try {
+    const checks = await odoo.searchRead("quality.check", [], ["quality_state"], 1000);
+    if (checks.length === 0) return null;
+    const passed = checks.filter((c) => c.quality_state === "pass").length;
+    return Math.round((passed / checks.length) * 100);
+  } catch (e) {
+    return null;
+  }
+}
+
+// GET /api/manufacturing
 exports.getManufacturingSummary = async (req, res) => {
   try {
     const today = new Date().toISOString().slice(0, 10);
 
-    const [doneToday, inProgress, allOrders] = await Promise.all([
+    const [doneToday, inProgress, allOrders, qualityScore] = await Promise.all([
       odoo.searchRead(
         "mrp.production",
         [["state", "=", "done"], ["date_finished", ">=", `${today} 00:00:00`]],
@@ -17,6 +31,7 @@ exports.getManufacturingSummary = async (req, res) => {
         ["id", "state"], 500
       ),
       odoo.searchRead("mrp.production", [], ["state"], 2000),
+      getQualityScore(),
     ]);
 
     const unitsToday = doneToday.reduce((s, r) => s + Number(r.product_qty || 0), 0);
@@ -29,7 +44,7 @@ exports.getManufacturingSummary = async (req, res) => {
         todaysProduction: unitsToday,
         ordersInProgress: inProgress.length,
         machineUtilization,
-        qualityScore: await getQualityScore(),
+        qualityScore,
       },
       reportGroups: [
         { key: "production",    label: "Production" },
@@ -125,7 +140,6 @@ exports.getInventory = async (req, res) => {
 };
 
 // GET /api/manufacturing/quality
-// Honest caveat: requires the Odoo Quality app; returns empty data if not installed.
 exports.getQuality = async (req, res) => {
   try {
     let checks = [];
@@ -182,7 +196,6 @@ exports.getProcurement = async (req, res) => {
 };
 
 // GET /api/manufacturing/maintenance
-// Honest caveat: requires the Odoo Maintenance app; returns empty data if not installed.
 exports.getMaintenance = async (req, res) => {
   try {
     let requests = [];
@@ -213,7 +226,6 @@ exports.getMaintenance = async (req, res) => {
 };
 
 // GET /api/manufacturing/workforce
-// Honest caveat: requires hr module access; falls back to empty list if denied.
 exports.getWorkforce = async (req, res) => {
   try {
     let employees = [];
@@ -278,7 +290,6 @@ exports.getCost = async (req, res) => {
 };
 
 // GET /api/manufacturing/ai-predictive
-// Simple heuristic until a real ML model is wired in.
 exports.getAiPredictive = async (req, res) => {
   try {
     const orders = await odoo.searchRead(
@@ -326,7 +337,7 @@ exports.getExecutiveDashboard = async (req, res) => {
   try {
     const today = new Date().toISOString().slice(0, 10);
 
-    const [doneToday, inProgress, delayed, allOrders, lowStockProducts] = await Promise.all([
+    const [doneToday, inProgress, delayed, allOrders, lowStockProducts, qualityScore] = await Promise.all([
       odoo.searchRead(
         "mrp.production",
         [["state", "=", "done"], ["date_finished", ">=", `${today} 00:00:00`]],
@@ -345,6 +356,7 @@ exports.getExecutiveDashboard = async (req, res) => {
         ["name", "qty_available", "reordering_min_qty"],
         300
       ),
+      getQualityScore(),
     ]);
 
     const unitsToday = doneToday.reduce((s, r) => s + Number(r.product_qty || 0), 0);
@@ -362,7 +374,7 @@ exports.getExecutiveDashboard = async (req, res) => {
       delayedOrders: delayed.length,
       machineUtilization: utilization,
       lowStockCount: lowStock.length,
-      qualityScore: await getQualityScore(),
+      qualityScore,
     });
   } catch (err) {
     return error(res, err.message);
