@@ -86,11 +86,10 @@ exports.getProfitAndLoss = async (req, res) => {
 
     const base = [["state", "=", "posted"], ["invoice_date", ">=", startDateStr]];
 
-    const [sales, purchases, { accountById, lines }, allSalesEver] = await Promise.all([
+    const [sales, purchases, { accountById, lines }] = await Promise.all([
       odoo.searchRead("account.move", [...base, ["move_type", "=", "out_invoice"]], ["amount_total", "invoice_date"], 1000),
       odoo.searchRead("account.move", [...base, ["move_type", "=", "in_invoice"]], ["amount_total", "invoice_date"], 1000),
       getPostedLedger(startDateStr),
-      odoo.searchRead("account.move", [["state", "=", "posted"], ["move_type", "=", "out_invoice"]], ["amount_total", "invoice_date"], 1000),
     ]);
 
     const salesRevenue = sales.reduce((s, r) => s + Number(r.amount_total || 0), 0);
@@ -147,18 +146,11 @@ exports.getProfitAndLoss = async (req, res) => {
         total: totalExpenses,
       },
       netProfit,
-      debug: {
-        startDateUsed: startDateStr,
-        invoicesInPeriod: sales.length,
-        invoicesEverPosted: allSalesEver.length,
-        allInvoiceDates: allSalesEver.map((s) => s.invoice_date),
-      },
     });
   } catch (err) {
     return error(res, err.message);
   }
 };
-
 // GET /api/accounts/balance-sheet
 exports.getBalanceSheet = async (req, res) => {
   try {
@@ -218,9 +210,24 @@ exports.getBalanceSheet = async (req, res) => {
 };
 
 // GET /api/accounts/cash-flow?period=month|quarter|year
+// GET /api/accounts/cash-flow?period=month|quarter|year
 exports.getCashFlow = async (req, res) => {
   try {
-    const base = [["state", "=", "posted"]];
+    const period = req.query.period || "month";
+    const today = new Date();
+
+    let startDate;
+    if (period === "year") {
+      startDate = new Date(today.getFullYear(), 0, 1);
+    } else if (period === "quarter") {
+      const quarterStartMonth = Math.floor(today.getMonth() / 3) * 3;
+      startDate = new Date(today.getFullYear(), quarterStartMonth, 1);
+    } else {
+      startDate = new Date(today.getFullYear(), today.getMonth(), 1);
+    }
+    const startDateStr = startDate.toISOString().slice(0, 10);
+
+    const base = [["state", "=", "posted"], ["invoice_date", ">=", startDateStr]];
 
     const [sales, purchases] = await Promise.all([
       odoo.searchRead("account.move", [...base, ["move_type", "=", "out_invoice"], ["payment_state", "in", ["paid", "in_payment"]]], ["amount_total"], 1000),
@@ -231,12 +238,15 @@ exports.getCashFlow = async (req, res) => {
     const cashPaidSuppliers = purchases.reduce((s, r) => s + Number(r.amount_total || 0), 0);
     const operating         = cashFromSales - cashPaidSuppliers;
 
+    // Investing and financing activity isn't separately tracked yet —
+    // genuinely 0 until fixed-asset purchases/loans are modeled, not
+    // a placeholder masking missing logic.
     const investing = 0;
     const financing = 0;
     const netChange = operating + investing + financing;
 
     return success(res, {
-      period: req.query.period || "month",
+      period,
       operating: {
         lines: [
           { label: "Cash from sales",        amount: cashFromSales },
@@ -264,7 +274,6 @@ exports.getCashFlow = async (req, res) => {
     return error(res, err.message);
   }
 };
-
 // GET /api/accounts/general-ledger
 exports.getGeneralLedger = async (req, res) => {
   try {
