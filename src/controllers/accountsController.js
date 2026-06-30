@@ -4,7 +4,7 @@ const { success, error } = require("../utils/response");
 // Shared helper: pulls every posted GL line plus the account name/type map.
 // Used by cash balance, balance sheet, and the P&L expense breakdown so we
 // don't repeat the same two queries in every function.
-async function getPostedLedger() {
+async function getPostedLedger(startDate) {
   const accounts = await odoo.searchRead(
     "account.account",
     [],
@@ -14,16 +14,20 @@ async function getPostedLedger() {
   const accountById = {};
   accounts.forEach((a) => { accountById[a.id] = a; });
 
+  const domain = [["parent_state", "=", "posted"]];
+  if (startDate) {
+    domain.push(["date", ">=", startDate]);
+  }
+
   const lines = await odoo.searchRead(
     "account.move.line",
-    [["parent_state", "=", "posted"]],
+    domain,
     ["account_id", "debit", "credit", "balance"],
     8000
   );
 
   return { accountById, lines };
 }
-
 // GET /api/accounts
 exports.getAccountsSummary = async (req, res) => {
   try {
@@ -67,20 +71,31 @@ exports.getAccountsSummary = async (req, res) => {
 // GET /api/accounts/profit-and-loss?period=month|quarter|year
 exports.getProfitAndLoss = async (req, res) => {
   try {
-    const base = [["state", "=", "posted"]];
+    const period = req.query.period || "month";
+    const today = new Date();
+
+    let startDate;
+    if (period === "year") {
+      startDate = new Date(today.getFullYear(), 0, 1);
+    } else if (period === "quarter") {
+      const quarterStartMonth = Math.floor(today.getMonth() / 3) * 3;
+      startDate = new Date(today.getFullYear(), quarterStartMonth, 1);
+    } else {
+      startDate = new Date(today.getFullYear(), today.getMonth(), 1);
+    }
+    const startDateStr = startDate.toISOString().slice(0, 10);
+
+    const base = [["state", "=", "posted"], ["invoice_date", ">=", startDateStr]];
 
     const [sales, purchases, { accountById, lines }] = await Promise.all([
-      odoo.searchRead("account.move", [...base, ["move_type", "=", "out_invoice"]], ["amount_total"], 1000),
-      odoo.searchRead("account.move", [...base, ["move_type", "=", "in_invoice"]], ["amount_total"], 1000),
-      getPostedLedger(),
+      odoo.searchRead("account.move", [...base, ["move_type", "=", "out_invoice"]], ["amount_total", "invoice_date"], 1000),
+      odoo.searchRead("account.move", [...base, ["move_type", "=", "in_invoice"]], ["amount_total", "invoice_date"], 1000),
+      getPostedLedger(startDateStr),
     ]);
 
     const salesRevenue = sales.reduce((s, r) => s + Number(r.amount_total || 0), 0);
     const costOfGoods  = purchases.reduce((s, r) => s + Number(r.amount_total || 0), 0);
 
-    // Total income recorded in the GL across income-type accounts.
-    // Income accounts normally carry a credit balance, so balance
-    // (debit - credit) comes out negative — flip the sign.
     let totalIncomeGL = 0;
     let salaries = 0;
     let rentUtilities = 0;
@@ -95,7 +110,6 @@ exports.getProfitAndLoss = async (req, res) => {
       if (acc.account_type === "income" || acc.account_type === "income_other") {
         totalIncomeGL += -balance;
       }
-
       if (acc.account_type?.startsWith("expense")) {
         totalExpenseGL += balance;
         if (/salary|wage|payroll/.test(name)) {
@@ -106,20 +120,16 @@ exports.getProfitAndLoss = async (req, res) => {
       }
     });
 
-    // "Other income" = whatever income hit the ledger beyond invoiced sales
-    // (e.g. manual journal entries, interest, refunds), floored at 0.
     const otherIncome = Math.max(0, totalIncomeGL - salesRevenue);
     const totalIncome = salesRevenue + otherIncome;
 
-    // "Other expenses" = total recorded GL expense minus the costOfGoods
-    // (purchase invoices) and the salary/rent buckets already split out.
     const otherExpenses = Math.max(0, totalExpenseGL - costOfGoods - salaries - rentUtilities);
     const totalExpenses = costOfGoods + salaries + rentUtilities + otherExpenses;
 
     const netProfit = totalIncome - totalExpenses;
 
     return success(res, {
-      period: req.query.period || "month",
+      period,
       income: {
         lines: [
           { label: "Sales revenue", amount: salesRevenue },
@@ -142,7 +152,6 @@ exports.getProfitAndLoss = async (req, res) => {
     return error(res, err.message);
   }
 };
-
 // GET /api/accounts/balance-sheet
 exports.getBalanceSheet = async (req, res) => {
   try {
