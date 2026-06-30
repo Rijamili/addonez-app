@@ -12,6 +12,7 @@ const errorHandler      = require("./middleware/errorHandler");
 validateBootstrap();
 
 const app = express();
+app.set("trust proxy", 1);
 
 app.use(helmet());
 app.use(cors());
@@ -30,7 +31,6 @@ app.use("/api/finance",   require("./routes/financeRoutes"));
 app.use("/api/accounts",      require("./routes/accountsRoutes"));
 app.use("/api/crm",           require("./routes/crmRoutes"));
 app.use("/api/manufacturing", require("./routes/manufacturingRoutes"));
-
 
 app.use("/api/projects",  require("./routes/projectRoutes"));
 app.use("/api/profile",   require("./routes/profileRoutes"));
