@@ -6,11 +6,22 @@ exports.getSales = async (req, res) => {
   const limit    = parseInt(req.query.limit  || "20");
   const offset   = parseInt(req.query.offset || "0");
   try {
-    const orders = await odoo.searchRead(
-      "sale.order", [["user_id.id", "=", uid]],
-      ["name", "partner_id", "amount_total", "state", "date_order"], limit, offset
-    );
-    return success(res, orders);
+    const domain = [["user_id.id", "=", uid]];
+
+    // The paginated list (for displaying rows) and the true total (across
+    // ALL of this user's orders, not just the current page) have to come
+    // from separate queries. Previously the app derived "Total Sales" by
+    // summing only the paginated `orders` array client-side — which meant
+    // anyone with more than `limit` orders (default 20) silently saw a
+    // fraction of their real total.
+    const [orders, allOrders] = await Promise.all([
+      odoo.searchRead("sale.order", domain, ["name", "partner_id", "amount_total", "state", "date_order"], limit, offset),
+      odoo.searchRead("sale.order", domain, ["amount_total"], 5000),
+    ]);
+
+    const totalSales = allOrders.reduce((s, o) => s + Number(o.amount_total || 0), 0);
+
+    return success(res, { orders, totalSales, totalCount: allOrders.length });
   } catch (err) {
     return error(res, err.message);
   }
