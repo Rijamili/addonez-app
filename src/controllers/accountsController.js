@@ -73,15 +73,12 @@ exports.getProfitAndLoss = async (req, res) => {
     const period = req.query.period || "month";
     const today = new Date();
 
-    let startDate;
-    if (period === "year") {
-      startDate = new Date(today.getFullYear(), 0, 1);
-    } else if (period === "quarter") {
-      const quarterStartMonth = Math.floor(today.getMonth() / 3) * 3;
-      startDate = new Date(today.getFullYear(), quarterStartMonth, 1);
-    } else {
-      startDate = new Date(today.getFullYear(), today.getMonth(), 1);
-    }
+    // Rolling windows rather than calendar boundaries — a report run on the
+    // 1st of the month/quarter should still show trailing activity instead
+    // of resetting to an empty period.
+    const daysBack = period === "year" ? 365 : period === "quarter" ? 90 : 30;
+    const startDate = new Date(today);
+    startDate.setDate(startDate.getDate() - daysBack);
     const startDateStr = startDate.toISOString().slice(0, 10);
 
     const base = [["state", "=", "posted"], ["invoice_date", ">=", startDateStr]];
@@ -222,15 +219,12 @@ exports.getCashFlow = async (req, res) => {
     const period = req.query.period || "month";
     const today = new Date();
 
-    let startDate;
-    if (period === "year") {
-      startDate = new Date(today.getFullYear(), 0, 1);
-    } else if (period === "quarter") {
-      const quarterStartMonth = Math.floor(today.getMonth() / 3) * 3;
-      startDate = new Date(today.getFullYear(), quarterStartMonth, 1);
-    } else {
-      startDate = new Date(today.getFullYear(), today.getMonth(), 1);
-    }
+    // Rolling windows rather than calendar boundaries — a report run on the
+    // 1st of the month/quarter should still show trailing activity instead
+    // of resetting to an empty period.
+    const daysBack = period === "year" ? 365 : period === "quarter" ? 90 : 30;
+    const startDate = new Date(today);
+    startDate.setDate(startDate.getDate() - daysBack);
     const startDateStr = startDate.toISOString().slice(0, 10);
 
     // Cash flow has to be driven by actual cash movements (account.payment),
