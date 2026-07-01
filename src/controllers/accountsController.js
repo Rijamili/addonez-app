@@ -167,15 +167,21 @@ exports.getBalanceSheet = async (req, res) => {
     lines.forEach((line) => {
       const acc = accountById[line.account_id?.[0]];
       if (!acc) return;
-      const amount = Number(line.balance || 0);
+      const rawBalance = Number(line.balance || 0); // Odoo: always debit - credit
 
       for (const key of Object.keys(buckets)) {
         if (buckets[key].types.includes(acc.account_type)) {
-          buckets[key].total += amount;
+          // Assets are debit-normal, so debit - credit is already the right
+          // sign. Liabilities and equity are credit-normal, so the same
+          // debit - credit balance comes out negative for a healthy account
+          // and has to be flipped to show as a positive figure that
+          // actually balances against assets.
+          const signed = key === "assets" ? rawBalance : -rawBalance;
+          buckets[key].total += signed;
         }
       }
       if (acc.account_type === "asset_cash") {
-        cashAndBank += amount;
+        cashAndBank += rawBalance;
       }
     });
 
@@ -227,15 +233,22 @@ exports.getCashFlow = async (req, res) => {
     }
     const startDateStr = startDate.toISOString().slice(0, 10);
 
-    const base = [["state", "=", "posted"], ["invoice_date", ">=", startDateStr]];
+    // Cash flow has to be driven by actual cash movements (account.payment),
+    // not invoice payment_state. An invoice being "posted" only means revenue
+    // was recognized (accrual) — it says nothing about whether cash actually
+    // moved. Relying on payment_state silently returns nothing whenever
+    // payments are reconciled directly against a bank statement rather than
+    // through "Register Payment" (a common workflow), which is what was
+    // causing every period to come back as 0.
+    const base = [["state", "=", "posted"], ["date", ">=", startDateStr]];
 
-    const [sales, purchases] = await Promise.all([
-      odoo.searchRead("account.move", [...base, ["move_type", "=", "out_invoice"], ["payment_state", "in", ["paid", "in_payment"]]], ["amount_total"], 1000),
-      odoo.searchRead("account.move", [...base, ["move_type", "=", "in_invoice"], ["payment_state", "in", ["paid", "in_payment"]]], ["amount_total"], 1000),
+    const [customerPayments, supplierPayments] = await Promise.all([
+      odoo.searchRead("account.payment", [...base, ["partner_type", "=", "customer"], ["payment_type", "=", "inbound"]], ["amount"], 1000),
+      odoo.searchRead("account.payment", [...base, ["partner_type", "=", "supplier"], ["payment_type", "=", "outbound"]], ["amount"], 1000),
     ]);
 
-    const cashFromSales     = sales.reduce((s, r) => s + Number(r.amount_total || 0), 0);
-    const cashPaidSuppliers = purchases.reduce((s, r) => s + Number(r.amount_total || 0), 0);
+    const cashFromSales     = customerPayments.reduce((s, r) => s + Number(r.amount || 0), 0);
+    const cashPaidSuppliers = supplierPayments.reduce((s, r) => s + Number(r.amount || 0), 0);
     const operating         = cashFromSales - cashPaidSuppliers;
 
     // Investing and financing activity isn't separately tracked yet —
