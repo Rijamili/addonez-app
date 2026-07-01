@@ -1,12 +1,31 @@
 const odoo = require("../config/OdooService");
 const { success, error } = require("../utils/response");
 
+const STATE_LABELS = {
+  draft: "Quotation",
+  sent:  "Quotation Sent",
+  sale:  "Confirmed",
+  done:  "Locked",
+  cancel: "Cancelled",
+};
+
 exports.getAnalytics = async (req, res) => {
-  const { uid } = req.user;
   try {
-    const sales = await odoo.searchRead("sale.order", [], ["amount_total"]);
+    // Explicit high limit — the previous version had no limit at all, which
+    // silently falls back to OdooService's default of 80. That happened to
+    // work while order count stayed under 80, but is the same fragile
+    // pattern that caused the sales pagination bug.
+    const sales = await odoo.searchRead("sale.order", [], ["amount_total", "state"], 5000);
     const total = sales.reduce((s, o) => s + Number(o.amount_total || 0), 0);
-    return success(res, { totalRevenue: total, totalOrders: sales.length });
+
+    const counts = {};
+    sales.forEach((o) => {
+      const label = STATE_LABELS[o.state] || o.state;
+      counts[label] = (counts[label] || 0) + 1;
+    });
+    const ordersByStatus = Object.entries(counts).map(([status, count]) => ({ status, count }));
+
+    return success(res, { totalRevenue: total, totalOrders: sales.length, ordersByStatus });
   } catch (err) {
     return error(res, err.message);
   }
