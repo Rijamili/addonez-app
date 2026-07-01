@@ -184,6 +184,15 @@ exports.getBalanceSheet = async (req, res) => {
 
     const receivable = buckets.assets.total - cashAndBank;
 
+    // Until the fiscal year is closed in Odoo, this year's profit sits in
+    // income/expense accounts rather than being rolled into an equity
+    // account. Real accounting software shows that gap explicitly as
+    // "Current Year Earnings" rather than just leaving equity at 0 and
+    // letting the sheet fail to balance. Computed the standard way:
+    // whatever is needed to make Assets = Liabilities + Equity.
+    const currentYearEarnings = buckets.assets.total - buckets.liabilities.total - buckets.equity.total;
+    const totalEquity = buckets.equity.total + currentYearEarnings;
+
     return success(res, {
       asOf: new Date().toISOString().slice(0, 10),
       assets: {
@@ -202,10 +211,11 @@ exports.getBalanceSheet = async (req, res) => {
       equity: {
         lines: [
           { label: "Owner's equity and retained earnings", amount: buckets.equity.total },
+          { label: "Current year earnings (unclosed fiscal year)", amount: currentYearEarnings },
         ],
-        total: buckets.equity.total,
+        total: totalEquity,
       },
-      totalLiabilitiesAndEquity: buckets.liabilities.total + buckets.equity.total,
+      totalLiabilitiesAndEquity: buckets.liabilities.total + totalEquity,
     });
   } catch (err) {
     return error(res, err.message);
