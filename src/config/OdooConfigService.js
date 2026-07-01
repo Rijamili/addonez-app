@@ -20,10 +20,10 @@ const { bootstrap } = require("./bootstrap");
 
 class OdooConfigService {
   constructor() {
-    this._config      = null;
-    this._lastLoaded  = null;
-    this._loading     = false;
-    this._clients     = null;
+    this._config        = null;
+    this._lastLoaded    = null;
+    this._loadingPromise = null; // shared in-flight load, not just a boolean flag
+    this._clients        = null;
   }
 
   // Build bootstrap XML-RPC clients
@@ -67,14 +67,26 @@ class OdooConfigService {
   }
 
   // Load all config keys from Odoo System Parameters
-  async loadFromOdoo() {
-    if (this._loading) {
-      // Wait if already loading
-      await new Promise((r) => setTimeout(r, 500));
-      return this._config;
+  loadFromOdoo() {
+    // If a load is already in flight, every caller gets the SAME promise
+    // and waits for the real result — instead of the old approach of
+    // sleeping 500ms and returning whatever _config happened to be at that
+    // moment, which could still be null if the first load hadn't finished
+    // yet. That gap is what caused "Cannot read properties of null
+    // (reading 'odoo')" whenever several requests hit a cold start at once
+    // (e.g. profit-and-loss and cash-flow both firing parallel Odoo calls).
+    if (this._loadingPromise) {
+      return this._loadingPromise;
     }
 
-    this._loading = true;
+    this._loadingPromise = this._doLoad().finally(() => {
+      this._loadingPromise = null;
+    });
+
+    return this._loadingPromise;
+  }
+
+  async _doLoad() {
     try {
       console.log("🔄 Loading config from Odoo System Parameters...");
       const uid     = await this._bootstrapAuth();
@@ -127,9 +139,6 @@ class OdooConfigService {
         jwt:  { secret: process.env.JWT_SECRET || "fallback_secret", expiresIn: "7d" },
       };
       return this._config;
-
-    } finally {
-      this._loading = false;
     }
   }
 
