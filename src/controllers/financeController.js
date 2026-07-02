@@ -10,13 +10,13 @@ exports.getFinance = async (req, res) => {
         "account.move",
         [...base, ["move_type", "=", "out_invoice"]],
         ["name", "amount_total", "payment_state", "invoice_date", "partner_id"],
-        200
+        10000
       ),
       odoo.searchRead(
         "account.move",
         [...base, ["move_type", "=", "in_invoice"]],
         ["name", "amount_total", "payment_state", "invoice_date", "partner_id"],
-        200
+        10000
       ),
     ]);
 
