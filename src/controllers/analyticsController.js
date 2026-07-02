@@ -1,31 +1,20 @@
 const odoo = require("../config/OdooService");
 const { success, error } = require("../utils/response");
 
-const STATE_LABELS = {
-  draft: "Quotation",
-  sent:  "Quotation Sent",
-  sale:  "Confirmed",
-  done:  "Locked",
-  cancel: "Cancelled",
-};
-
 exports.getAnalytics = async (req, res) => {
+  const { uid } = req.user;
   try {
-    // Explicit high limit — the previous version had no limit at all, which
-    // silently falls back to OdooService's default of 80. That happened to
-    // work while order count stayed under 80, but is the same fragile
-    // pattern that caused the sales pagination bug.
-    const sales = await odoo.searchRead("sale.order", [], ["amount_total", "state"], 5000);
-    const total = sales.reduce((s, o) => s + Number(o.amount_total || 0), 0);
-
-    const counts = {};
-    sales.forEach((o) => {
-      const label = STATE_LABELS[o.state] || o.state;
-      counts[label] = (counts[label] || 0) + 1;
-    });
-    const ordersByStatus = Object.entries(counts).map(([status, count]) => ({ status, count }));
-
-    return success(res, { totalRevenue: total, totalOrders: sales.length, ordersByStatus });
+    // Revenue = posted customer invoices only, not every sale order.
+    // A draft order shouldn't move this number, and a cancelled invoice
+    // (state = "cancel") is excluded automatically once it's no longer "posted".
+    const invoices = await odoo.searchRead(
+      "account.move",
+      [["move_type", "=", "out_invoice"], ["state", "=", "posted"]],
+      ["amount_total"],
+      10000
+    );
+    const total = invoices.reduce((s, o) => s + Number(o.amount_total || 0), 0);
+    return success(res, { totalRevenue: total, totalOrders: invoices.length });
   } catch (err) {
     return error(res, err.message);
   }
@@ -34,16 +23,20 @@ exports.getAnalytics = async (req, res) => {
 exports.getPredictions = async (req, res) => {
   const { uid } = req.user;
   try {
-    // Same bug as the earlier sales pagination issue: a hardcoded limit
-    // (was 50) silently truncated any user with more orders than that,
-    // which then fed a wrong base number into every prediction below it.
-    const sales = await odoo.searchRead("sale.order", [["user_id.id", "=", uid]], ["amount_total"], 5000);
-    const total = sales.reduce((s, o) => s + Number(o.amount_total || 0), 0);
+    // Same fix as getAnalytics: base predictions on posted invoices for
+    // this salesperson, not on every sale order regardless of state.
+    const invoices = await odoo.searchRead(
+      "account.move",
+      [["move_type", "=", "out_invoice"], ["state", "=", "posted"], ["invoice_user_id", "=", uid]],
+      ["amount_total"],
+      50
+    );
+    const total = invoices.reduce((s, o) => s + Number(o.amount_total || 0), 0);
     return success(res, {
       currentRevenue:  total,
-      currentOrders:   sales.length,
+      currentOrders:   invoices.length,
       predictedRevenue: +(total * 1.12).toFixed(2),
-      predictedOrders:  Math.round(sales.length * 1.18),
+      predictedOrders:  Math.round(invoices.length * 1.18),
       growth: "12%",
       insight: total > 0
         ? "Revenue is expected to grow based on recent sales."
