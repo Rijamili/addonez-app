@@ -89,21 +89,19 @@ exports.getProfitAndLoss = async (req, res) => {
     }
     const startDateStr = startDate.toISOString().slice(0, 10);
 
-    const base = [["state", "=", "posted"], ["invoice_date", ">=", startDateStr]];
+    // Fully GL-based, matching Odoo's native Profit and Loss report exactly:
+    // same posting-date filter (getPostedLedger filters on the GL "date"
+    // field, not invoice_date) and same account-type grouping. This no
+    // longer mixes in invoice amount_total (which includes tax) — every
+    // figure below comes straight from the ledger, tax-exclusive.
+    const { accountById, lines } = await getPostedLedger(startDateStr);
 
-    const [sales, purchases, { accountById, lines }] = await Promise.all([
-      odoo.searchRead("account.move", [...base, ["move_type", "=", "out_invoice"]], ["amount_total", "invoice_date"], 1000),
-      odoo.searchRead("account.move", [...base, ["move_type", "=", "in_invoice"]], ["amount_total", "invoice_date"], 1000),
-      getPostedLedger(startDateStr),
-    ]);
-
-    const salesRevenue = sales.reduce((s, r) => s + Number(r.amount_total || 0), 0);
-    const costOfGoods  = purchases.reduce((s, r) => s + Number(r.amount_total || 0), 0);
-
-    let totalIncomeGL = 0;
+    let totalIncome = 0;
+    let salesRevenue = 0;
+    let totalExpenses = 0;
+    let costOfGoods = 0;
     let salaries = 0;
     let rentUtilities = 0;
-    let totalExpenseGL = 0;
 
     lines.forEach((line) => {
       const acc = accountById[line.account_id?.[0]];
@@ -112,11 +110,17 @@ exports.getProfitAndLoss = async (req, res) => {
       const name = (acc.name || "").toLowerCase();
 
       if (acc.account_type === "income" || acc.account_type === "income_other") {
-        totalIncomeGL += -balance;
+        const amount = -balance; // income accounts are credit-normal
+        totalIncome += amount;
+        if (/sale/.test(name)) {
+          salesRevenue += amount;
+        }
       }
       if (acc.account_type?.startsWith("expense")) {
-        totalExpenseGL += balance;
-        if (/salary|wage|payroll/.test(name)) {
+        totalExpenses += balance;
+        if (/cost of goods|cogs|purchase/.test(name)) {
+          costOfGoods += balance;
+        } else if (/salary|wage|payroll/.test(name)) {
           salaries += balance;
         } else if (/rent|utilit|electric|water bill/.test(name)) {
           rentUtilities += balance;
@@ -124,11 +128,8 @@ exports.getProfitAndLoss = async (req, res) => {
       }
     });
 
-    const otherIncome = Math.max(0, totalIncomeGL - salesRevenue);
-    const totalIncome = salesRevenue + otherIncome;
-
-    const otherExpenses = Math.max(0, totalExpenseGL - costOfGoods - salaries - rentUtilities);
-    const totalExpenses = costOfGoods + salaries + rentUtilities + otherExpenses;
+    const otherIncome = totalIncome - salesRevenue;
+    const otherExpenses = totalExpenses - costOfGoods - salaries - rentUtilities;
 
     const netProfit = totalIncome - totalExpenses;
 
