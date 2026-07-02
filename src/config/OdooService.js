@@ -100,8 +100,10 @@ class OdooService {
   }
 
   // Convenience methods
-  async searchRead(model, domain = [], fields = [], limit = 80, offset = 0) {
-    return this.execute(model, "search_read", [domain], { fields, limit, offset });
+  async searchRead(model, domain = [], fields = [], limit = 80, offset = 0, order = "") {
+    const kwargs = { fields, limit, offset };
+    if (order) kwargs.order = order;
+    return this.execute(model, "search_read", [domain], kwargs);
   }
 
   async searchCount(model, domain = []) {

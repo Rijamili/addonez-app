@@ -5,6 +5,7 @@ exports.getSales = async (req, res) => {
   const { uid }  = req.user;
   const limit    = parseInt(req.query.limit  || "20");
   const offset   = parseInt(req.query.offset || "0");
+  const sortDir  = (req.query.sort || "desc").toLowerCase() === "asc" ? "asc" : "desc";
   try {
     const domain = [["user_id.id", "=", uid]];
 
@@ -14,8 +15,18 @@ exports.getSales = async (req, res) => {
     // summing only the paginated `orders` array client-side — which meant
     // anyone with more than `limit` orders (default 20) silently saw a
     // fraction of their real total.
+    //
+    // The paginated `orders` list is sorted by amount_total so "Top Sales
+    // Orders" actually shows highest-revenue orders first (desc by default,
+    // ?sort=asc to flip it). The `allOrders` total-sum query doesn't need a
+    // sort — every row is read regardless of order.
     const [orders, allOrders] = await Promise.all([
-      odoo.searchRead("sale.order", domain, ["name", "partner_id", "amount_total", "state", "date_order"], limit, offset),
+      odoo.searchRead(
+        "sale.order", domain,
+        ["name", "partner_id", "amount_total", "state", "date_order"],
+        limit, offset,
+        `amount_total ${sortDir}`
+      ),
       odoo.searchRead("sale.order", domain, ["amount_total"], 5000),
     ]);
 
