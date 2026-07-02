@@ -10,22 +10,19 @@ exports.getSales = async (req, res) => {
     const domain = [["user_id.id", "=", uid]];
 
     // The paginated list (for displaying rows) and the true total (across
-    // ALL of this user's orders, not just the current page) have to come
-    // from separate queries. Previously the app derived "Total Sales" by
-    // summing only the paginated `orders` array client-side — which meant
-    // anyone with more than `limit` orders (default 20) silently saw a
-    // fraction of their real total.
+    // ALL of this user's orders, not just the current page) come from
+    // separate queries — see prior note on why.
     //
-    // The paginated `orders` list is sorted by amount_total so "Top Sales
-    // Orders" actually shows highest-revenue orders first (desc by default,
-    // ?sort=asc to flip it). The `allOrders` total-sum query doesn't need a
-    // sort — every row is read regardless of order.
+    // The paginated `orders` list is sorted by date_order so it shows the
+    // most RECENT orders first (desc by default, ?sort=asc to flip it).
+    // The `allOrders` total-sum query doesn't need a sort — every row is
+    // read regardless of order.
     const [orders, allOrders] = await Promise.all([
       odoo.searchRead(
         "sale.order", domain,
         ["name", "partner_id", "amount_total", "state", "date_order"],
         limit, offset,
-        `amount_total ${sortDir}`
+        `date_order ${sortDir}`
       ),
       odoo.searchRead("sale.order", domain, ["amount_total"], 5000),
     ]);
