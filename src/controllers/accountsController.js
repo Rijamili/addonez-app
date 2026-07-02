@@ -29,6 +29,18 @@ async function getPostedLedger(startDate) {
   return { accountById, lines };
 }
 
+// An account counts as "cash" for KPI/report purposes if it's tagged
+// asset_cash in Odoo's chart of accounts, OR it's a bank suspense/clearing
+// account. Suspense accounts hold cash that has genuinely moved (bank
+// transactions in transit) but hasn't been reconciled to a statement line
+// yet — so per the native Balance Sheet report, it belongs in "cash and
+// bank" even though Odoo tags it with a different account_type.
+function isCashAccount(acc) {
+  if (!acc) return false;
+  if (acc.account_type === "asset_cash") return true;
+  return /bank suspense/i.test(acc.name || "");
+}
+
 // GET /api/accounts
 exports.getAccountsSummary = async (req, res) => {
   try {
@@ -46,7 +58,7 @@ exports.getAccountsSummary = async (req, res) => {
 
     const cashBalance = lines.reduce((sum, line) => {
       const acc = accountById[line.account_id?.[0]];
-      if (acc?.account_type === "asset_cash") {
+      if (isCashAccount(acc)) {
         return sum + Number(line.balance || 0);
       }
       return sum;
@@ -180,7 +192,7 @@ exports.getBalanceSheet = async (req, res) => {
           buckets[key].total += amount;
         }
       }
-      if (acc.account_type === "asset_cash") {
+      if (isCashAccount(acc)) {
         cashAndBank += amount;
       }
     });
