@@ -41,7 +41,7 @@ exports.getTaskAnalysis = async (req, res) => {
     const tasks = await odoo.searchRead(
       "project.task",
       [["project_id", "=", projectId]],
-      ["name", "stage_id", "date_deadline", "priority", "kanban_state"],
+      ["name", "stage_id", "date_deadline", "priority"],
       2000
     );
 
@@ -111,6 +111,7 @@ exports.getTaskAnalysis = async (req, res) => {
       completionPercent,
     });
   } catch (err) {
+    console.error("getTaskAnalysis failed:", err);
     return error(res, err.message);
   }
 };
