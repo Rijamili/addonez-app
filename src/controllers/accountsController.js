@@ -170,57 +170,83 @@ exports.getProfitAndLoss = async (req, res) => {
   }
 };
 // GET /api/accounts/balance-sheet
+// Which top-level balance sheet section each Odoo account_type rolls up
+// into. Income/expense types aren't a section of their own — they feed
+// the "Profit (Loss) to report" line below, same as the native report.
+const SECTION_BY_TYPE = {
+  asset_cash: "assets",
+  asset_receivable: "assets",
+  asset_current: "assets",
+  asset_non_current: "assets",
+  asset_fixed: "assets",
+  asset_prepayments: "assets",
+  liability_payable: "liabilities",
+  liability_current: "liabilities",
+  liability_non_current: "liabilities",
+  liability_credit_card: "liabilities",
+  equity: "equity",
+  equity_unaffected: "equity",
+};
+
 exports.getBalanceSheet = async (req, res) => {
   try {
     const { accountById, lines } = await getPostedLedger();
 
-    const buckets = {
-      assets:      { types: ["asset_cash", "asset_receivable", "asset_current", "asset_non_current", "asset_fixed", "asset_prepayments"], total: 0 },
-      liabilities: { types: ["liability_payable", "liability_current", "liability_non_current", "liability_credit_card"], total: 0 },
-      equity:      { types: ["equity", "equity_unaffected"], total: 0 },
+    // Roll every posted line up to its account first, so each account
+    // shows once with its net balance — not one row per journal entry.
+    const accountTotals = {};
+    lines.forEach((line) => {
+      const accId = line.account_id?.[0];
+      if (!accId) return;
+      accountTotals[accId] = (accountTotals[accId] || 0) + Number(line.balance || 0);
+    });
+
+    const sections = {
+      assets:      { lines: [], total: 0 },
+      liabilities: { lines: [], total: 0 },
+      equity:      { lines: [], total: 0 },
     };
 
-    let cashAndBank = 0;
+    let incomeTotal = 0;
+    let expenseTotal = 0;
 
-    lines.forEach((line) => {
-      const acc = accountById[line.account_id?.[0]];
+    Object.keys(accountTotals).forEach((accId) => {
+      const balance = accountTotals[accId];
+      if (Math.abs(balance) < 0.005) return; // only accounts that actually have entries
+
+      const acc = accountById[accId];
       if (!acc) return;
-      const amount = Number(line.balance || 0);
 
-      for (const key of Object.keys(buckets)) {
-        if (buckets[key].types.includes(acc.account_type)) {
-          buckets[key].total += amount;
-        }
-      }
-      if (isCashAccount(acc)) {
-        cashAndBank += amount;
+      const section = SECTION_BY_TYPE[acc.account_type];
+      if (section) {
+        sections[section].lines.push({
+          label: `${acc.code} ${acc.name}`,
+          amount: balance,
+        });
+        sections[section].total += balance;
+      } else if (acc.account_type === "income" || acc.account_type === "income_other") {
+        incomeTotal += balance;
+      } else if (acc.account_type?.startsWith("expense")) {
+        expenseTotal += balance;
       }
     });
 
-    const receivable = buckets.assets.total - cashAndBank;
+    // The period's net result hasn't been closed to an equity account in
+    // the ledger yet, so fold it in as its own line the way Odoo's native
+    // balance sheet does — sized so assets == liabilities + equity.
+    const profitLossToReport = -(incomeTotal + expenseTotal);
+    sections.liabilities.lines.push({ label: "Profit (Loss) to report", amount: profitLossToReport });
+    sections.liabilities.total += profitLossToReport;
+
+    // List accounts in chart-of-accounts order (by code) within each section.
+    Object.values(sections).forEach((s) => s.lines.sort((a, b) => a.label.localeCompare(b.label)));
 
     return success(res, {
       asOf: new Date().toISOString().slice(0, 10),
-      assets: {
-        lines: [
-          { label: "Cash and bank",       amount: cashAndBank },
-          { label: "Accounts receivable", amount: receivable },
-        ],
-        total: buckets.assets.total,
-      },
-      liabilities: {
-        lines: [
-          { label: "Accounts payable and other liabilities", amount: buckets.liabilities.total },
-        ],
-        total: buckets.liabilities.total,
-      },
-      equity: {
-        lines: [
-          { label: "Owner's equity and retained earnings", amount: buckets.equity.total },
-        ],
-        total: buckets.equity.total,
-      },
-      totalLiabilitiesAndEquity: buckets.liabilities.total + buckets.equity.total,
+      assets: sections.assets,
+      liabilities: sections.liabilities,
+      equity: sections.equity,
+      totalLiabilitiesAndEquity: sections.liabilities.total + sections.equity.total,
     });
   } catch (err) {
     return error(res, err.message);

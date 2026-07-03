@@ -26,3 +26,91 @@ exports.getTasks = async (req, res) => {
     return error(res, err.message);
   }
 };
+
+// GET /api/projects/:id/task-analysis
+// Full breakdown of a project's tasks: counts by stage, counts by priority,
+// how many are overdue, and what percentage of tasks are in a "closed"
+// (done/cancelled) stage.
+exports.getTaskAnalysis = async (req, res) => {
+  try {
+    const projectId = parseInt(req.params.id, 10);
+    if (!projectId) {
+      return error(res, "A valid project id is required", 400);
+    }
+
+    const tasks = await odoo.searchRead(
+      "project.task",
+      [["project_id", "=", projectId]],
+      ["name", "stage_id", "date_deadline", "priority", "kanban_state"],
+      2000
+    );
+
+    const totalTasks = tasks.length;
+
+    if (totalTasks === 0) {
+      return success(res, {
+        projectId, totalTasks: 0,
+        byStage: [], byPriority: [],
+        overdueCount: 0, completedCount: 0, completionPercent: 0,
+      });
+    }
+
+    // Stage names alone don't tell us which stages count as "done" — Odoo
+    // tracks that on project.task.type via is_closed, so fetch it once for
+    // exactly the stages this project's tasks are actually using.
+    const stageIds = [...new Set(tasks.map((t) => t.stage_id?.[0]).filter(Boolean))];
+    const stages = stageIds.length
+      ? await odoo.searchRead("project.task.type", [["id", "in", stageIds]], ["id", "name", "is_closed"], stageIds.length)
+      : [];
+    const stageById = {};
+    stages.forEach((s) => { stageById[s.id] = s; });
+
+    const PRIORITY_LABELS = { "0": "Normal", "1": "High" };
+
+    const stageCounts = {};
+    const priorityCounts = {};
+    let overdueCount = 0;
+    let completedCount = 0;
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    tasks.forEach((task) => {
+      const stageName = task.stage_id?.[1] || "No stage";
+      stageCounts[stageName] = (stageCounts[stageName] || 0) + 1;
+
+      const priorityKey = task.priority || "0";
+      const priorityLabel = PRIORITY_LABELS[priorityKey] || `Priority ${priorityKey}`;
+      priorityCounts[priorityLabel] = (priorityCounts[priorityLabel] || 0) + 1;
+
+      const stageInfo = stageById[task.stage_id?.[0]];
+      const isClosed = !!stageInfo?.is_closed;
+      if (isClosed) completedCount += 1;
+
+      if (!isClosed && task.date_deadline && task.date_deadline < today) {
+        overdueCount += 1;
+      }
+    });
+
+    const byStage = Object.entries(stageCounts)
+      .map(([stage, count]) => ({ stage, count }))
+      .sort((a, b) => b.count - a.count);
+
+    const byPriority = Object.entries(priorityCounts)
+      .map(([priority, count]) => ({ priority, count }))
+      .sort((a, b) => b.count - a.count);
+
+    const completionPercent = Math.round((completedCount / totalTasks) * 100);
+
+    return success(res, {
+      projectId,
+      totalTasks,
+      byStage,
+      byPriority,
+      overdueCount,
+      completedCount,
+      completionPercent,
+    });
+  } catch (err) {
+    return error(res, err.message);
+  }
+};
