@@ -56,11 +56,14 @@ exports.getTaskAnalysis = async (req, res) => {
     }
 
     // Stage names alone don't tell us which stages count as "done" — Odoo
-    // tracks that on project.task.type via is_closed, so fetch it once for
-    // exactly the stages this project's tasks are actually using.
+    // tracks that on project.task.type via the "fold" field (folded stages
+    // like "Done"/"Cancelled" are treated as closed by Odoo's own kanban
+    // and reporting logic). Note: there is no "is_closed" field on this
+    // model — that name only exists on other models like CRM/Helpdesk
+    // stages, so don't reach for it here.
     const stageIds = [...new Set(tasks.map((t) => t.stage_id?.[0]).filter(Boolean))];
     const stages = stageIds.length
-      ? await odoo.searchRead("project.task.type", [["id", "in", stageIds]], ["id", "name", "is_closed"], stageIds.length)
+      ? await odoo.searchRead("project.task.type", [["id", "in", stageIds]], ["id", "name", "fold"], stageIds.length)
       : [];
     const stageById = {};
     stages.forEach((s) => { stageById[s.id] = s; });
@@ -83,7 +86,7 @@ exports.getTaskAnalysis = async (req, res) => {
       priorityCounts[priorityLabel] = (priorityCounts[priorityLabel] || 0) + 1;
 
       const stageInfo = stageById[task.stage_id?.[0]];
-      const isClosed = !!stageInfo?.is_closed;
+      const isClosed = !!stageInfo?.fold;
       if (isClosed) completedCount += 1;
 
       if (!isClosed && task.date_deadline && task.date_deadline < today) {
