@@ -227,11 +227,17 @@ exports.getBalanceSheet = async (req, res) => {
 
       const section = SECTION_BY_TYPE[acc.account_type];
       if (section) {
+        // Assets are debit-normal, so the raw GL balance IS the real value.
+        // Liabilities and equity are credit-normal, so the raw balance is
+        // negative when the real obligation/equity increases — flip it so
+        // the report shows the true positive amount and Assets ends up
+        // equal to Liabilities + Equity, as a balance sheet must.
+        const displayAmount = section === "assets" ? balance : -balance;
         sections[section].lines.push({
           label: `${acc.code} ${acc.name}`,
-          amount: balance,
+          amount: displayAmount,
         });
-        sections[section].total += balance;
+        sections[section].total += displayAmount;
       } else if (acc.account_type === "income" || acc.account_type === "income_other") {
         incomeTotal += balance;
       } else if (acc.account_type?.startsWith("expense")) {
