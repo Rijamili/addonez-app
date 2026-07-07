@@ -85,6 +85,7 @@ const createTenant = async (req, res) => {
 
   try {
     // Fail fast with a clear message instead of saving a broken tenant.
+   console.log("Merged Config:", mergedConfig);
     await testOdooConnection(odooConfig);
   } catch (err) {
     return error(res, `Connection check failed — tenant was not saved. ${err.message}`, 422);
