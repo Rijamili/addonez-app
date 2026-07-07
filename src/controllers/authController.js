@@ -9,9 +9,17 @@ const login = async (req, res) => {
   const { email, password } = req.body;
 
   const tenant = TenantDirectory.findByEmail(email);
-  console.log("========== LOGIN ==========");
+ console.log("========== LOGIN ==========");
 console.log("Email:", email);
+
+const tenant = TenantDirectory.findByEmail(email);
 console.log("Tenant:", tenant);
+
+const uid = await odoo.authenticateUser(email, password);
+console.log("Authenticated UID:", uid);
+
+const user = await odoo.getUserByEmail(email);
+console.log("User:", user);
   if (!tenant) {
     return error(res, "We couldn't find an organization for that email. Contact your administrator.", 404);
   }
