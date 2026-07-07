@@ -1,9 +1,20 @@
 const express = require("express");
-const router  = express.Router();
+const router = express.Router();
+
 const { authenticate } = require("../middleware/auth");
-const { getProfile } = require("../controllers/profileController");
-router.get("/", authenticate, getProfile);
-router.put("/notifications", auth, profileController.updateNotifications);
+const profileController = require("../controllers/profileController");
+
+// Get Profile
+router.get("/", authenticate, profileController.getProfile);
+
+// Update Notification Settings
+router.put(
+  "/notifications",
+  authenticate,
+  profileController.updateNotifications
+);
+
+// Change Password
 router.put(
   "/change-password",
   authenticate,
