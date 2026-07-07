@@ -87,23 +87,27 @@ class OdooConfigService {
   }
 
   async _doLoad() {
+    // No legacy Odoo configured at all — that's fine now. This service is
+    // only used as a fallback for requests with no tenant context, which
+    // real (tenant-scoped) traffic never hits.
+    if (!bootstrap.odoo.host) {
+      this._config = null;
+      throw new Error("No legacy default Odoo configured (BOOTSTRAP_ODOO_* not set).");
+    }
+
     try {
-      console.log("🔄 Loading config from Odoo System Parameters...");
+      console.log("🔄 Loading legacy default config from Odoo System Parameters...");
       const uid     = await this._bootstrapAuth();
       const { models } = this._buildBootstrapClients();
 
-      // Read all app config keys in parallel
-      const [host, db, username, password, jwtSecret, jwtExpiry, sslStr] = await Promise.all([
+      const [host, db, username, password, sslStr] = await Promise.all([
         this._readParam(models, uid, "app.odoo.host"),
         this._readParam(models, uid, "app.odoo.db"),
         this._readParam(models, uid, "app.odoo.username"),
         this._readParam(models, uid, "app.odoo.password"),
-        this._readParam(models, uid, "app.jwt.secret"),
-        this._readParam(models, uid, "app.jwt.expiry"),
         this._readParam(models, uid, "app.odoo.ssl"),
       ]);
 
-      // Fallback to bootstrap values if Odoo params not set yet
       this._config = {
         odoo: {
           host:     host     || bootstrap.odoo.host,
@@ -113,31 +117,22 @@ class OdooConfigService {
           ssl:      sslStr !== null ? sslStr !== "false" : bootstrap.odoo.ssl,
           port:     443,
         },
-        jwt: {
-          secret:    jwtSecret || process.env.JWT_SECRET || "fallback_secret_change_in_odoo",
-          expiresIn: jwtExpiry  || "7d",
-        },
       };
 
       this._lastLoaded = Date.now();
-      console.log(`✅ Config loaded from Odoo → ${this._config.odoo.host} / ${this._config.odoo.db}`);
+      console.log(`✅ Legacy config loaded from Odoo → ${this._config.odoo.host} / ${this._config.odoo.db}`);
       return this._config;
 
     } catch (err) {
-      console.error("❌ Failed to load config from Odoo:", err.message);
+      console.error("❌ Failed to load legacy config from Odoo:", err.message);
 
-      // If we have a cached config, keep using it
       if (this._config) {
-        console.warn("⚠️  Using cached config from last successful load.");
+        console.warn("⚠️  Using cached legacy config from last successful load.");
         return this._config;
       }
 
-      // Last resort: use bootstrap values
-      console.warn("⚠️  Falling back to bootstrap config.");
-      this._config = {
-        odoo: { ...bootstrap.odoo },
-        jwt:  { secret: process.env.JWT_SECRET || "fallback_secret", expiresIn: "7d" },
-      };
+      console.warn("⚠️  Falling back to bootstrap values for legacy config.");
+      this._config = { odoo: { ...bootstrap.odoo } };
       return this._config;
     }
   }
@@ -163,12 +158,6 @@ class OdooConfigService {
   async getOdooConfig() {
     const cfg = await this.getConfig();
     return cfg.odoo;
-  }
-
-  // Get jwt config only
-  async getJwtConfig() {
-    const cfg = await this.getConfig();
-    return cfg.jwt;
   }
 }
 

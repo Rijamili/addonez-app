@@ -1,135 +1,110 @@
-// src/services/OdooService.js
-// ─────────────────────────────────────────────────────────────────────────────
-// Core Odoo service — always uses LATEST config from OdooConfigService.
-// Builds fresh XML-RPC clients whenever config changes.
-// Admin changes config in Odoo → next request uses new config automatically.
-// ─────────────────────────────────────────────────────────────────────────────
+// src/config/OdooService.js
+// Multi-tenant. Same public API as before (odoo.searchRead, odoo.execute, ...)
+// so no controller needs to change — it reads the active tenant from
+// requestContext and keeps a separate connection/admin session per tenant.
 
-const xmlrpc           = require("xmlrpc");
-const OdooConfigService = require("../config/OdooConfigService");
+const xmlrpc            = require("xmlrpc");
+const OdooConfigService = require("./OdooConfigService");
+const requestContext    = require("./requestContext");
+
+const AUTH_TTL = 25 * 60 * 1000;
 
 class OdooService {
   constructor() {
-    this._adminUid    = null;
-    this._lastAuth    = null;
-    this._lastHost    = null; // Track host changes
-    this._clients     = null;
-    this.AUTH_TTL     = 25 * 60 * 1000; // 25 min session cache
+    this._clientsByTenant = new Map();
+    this._adminAuthByTenant = new Map();
   }
 
-  // Build clients for a given config
+  async _resolveActiveConfig() {
+    const tenant = requestContext.getTenant();
+    if (tenant) return { key: `tenant:${tenant.id}`, odooConfig: tenant.odoo };
+    const cfg = await OdooConfigService.getOdooConfig();
+    return { key: "legacy-default", odooConfig: cfg };
+  }
+
   _buildClients(odooConfig) {
     const { host, port, ssl } = odooConfig;
-    const opts   = { host, port };
+    const opts = { host, port };
     const create = (path) =>
-      ssl
-        ? xmlrpc.createSecureClient({ ...opts, path })
-        : xmlrpc.createClient({ ...opts, path });
-    return {
-      common: create("/xmlrpc/2/common"),
-      models: create("/xmlrpc/2/object"),
-    };
+      ssl ? xmlrpc.createSecureClient({ ...opts, path }) : xmlrpc.createClient({ ...opts, path });
+    return { common: create("/xmlrpc/2/common"), models: create("/xmlrpc/2/object") };
   }
 
-  // Get clients — rebuild if host changed (admin updated config)
   async _getClients() {
-    const odooConfig = await OdooConfigService.getOdooConfig();
-    if (!this._clients || this._lastHost !== odooConfig.host) {
-      this._clients  = this._buildClients(odooConfig);
-      this._lastHost = odooConfig.host;
-      this._adminUid = null; // Force re-auth on host change
+    const { key, odooConfig } = await this._resolveActiveConfig();
+    if (!this._clientsByTenant.has(key)) {
+      this._clientsByTenant.set(key, this._buildClients(odooConfig));
     }
-    return { clients: this._clients, odooConfig };
+    return { key, clients: this._clientsByTenant.get(key), odooConfig };
   }
 
-  // Authenticate as admin (cached, auto-refresh)
   async getAdminUid() {
+    const { key, clients, odooConfig } = await this._getClients();
+    const cached = this._adminAuthByTenant.get(key);
     const now = Date.now();
-    if (this._adminUid && this._lastAuth && (now - this._lastAuth) < this.AUTH_TTL) {
-      return this._adminUid;
-    }
+    if (cached && (now - cached.lastAuth) < AUTH_TTL) return cached.uid;
 
-    const { clients, odooConfig } = await this._getClients();
-    const { db, username, password } = odooConfig;
+    const db       = odooConfig.db;
+    const username = odooConfig.adminUsername || odooConfig.username;
+    const password = odooConfig.adminPassword || odooConfig.password;
 
     return new Promise((resolve, reject) => {
       clients.common.methodCall("authenticate", [db, username, password, {}], (err, uid) => {
         if (err || !uid) return reject(new Error("Odoo admin auth failed: " + (err?.message || "Invalid credentials")));
-        this._adminUid = uid;
-        this._lastAuth = Date.now();
+        this._adminAuthByTenant.set(key, { uid, lastAuth: Date.now() });
         resolve(uid);
       });
     });
   }
 
-  // Validate a specific user's email + password against Odoo
   async authenticateUser(email, password) {
     const { clients, odooConfig } = await this._getClients();
     const { db } = odooConfig;
     return new Promise((resolve, reject) => {
       clients.common.methodCall("authenticate", [db, email, password, {}], (err, uid) => {
-        if (err)  return reject(new Error("Auth error: " + err.message));
+        if (err) return reject(new Error("Auth error: " + err.message));
         if (!uid) return reject(new Error("Invalid email or password."));
         resolve(uid);
       });
     });
   }
 
-  // Execute any Odoo model method
   async execute(model, method, args = [], kwargs = {}) {
     const uid = await this.getAdminUid();
-    const { clients, odooConfig } = await this._getClients();
-    const { db, password } = odooConfig;
+    const { key, clients, odooConfig } = await this._getClients();
+    const db = odooConfig.db;
+    const password = odooConfig.adminPassword || odooConfig.password;
 
     return new Promise((resolve, reject) => {
-      clients.models.methodCall(
-        "execute_kw",
-        [db, uid, password, model, method, args, kwargs],
-        (err, result) => {
-          if (err) {
-            if (err.message?.includes("AccessDenied")) {
-              this._adminUid = null;
-              this._lastAuth = null;
-            }
-            return reject(new Error(`[${model}.${method}]: ${err.message}`));
-          }
-          resolve(result);
+      clients.models.methodCall("execute_kw", [db, uid, password, model, method, args, kwargs], (err, result) => {
+        if (err) {
+          if (err.message?.includes("AccessDenied")) this._adminAuthByTenant.delete(key);
+          return reject(new Error(`[${model}.${method}]: ${err.message}`));
         }
-      );
+        resolve(result);
+      });
     });
   }
 
-  // Convenience methods
   async searchRead(model, domain = [], fields = [], limit = 80, offset = 0, order = "") {
     const kwargs = { fields, limit, offset };
     if (order) kwargs.order = order;
     return this.execute(model, "search_read", [domain], kwargs);
   }
 
-  async searchCount(model, domain = []) {
-    return this.execute(model, "search_count", [domain]);
-  }
-
-  async read(model, ids, fields = []) {
-    return this.execute(model, "read", [ids], { fields });
-  }
+  async searchCount(model, domain = []) { return this.execute(model, "search_count", [domain]); }
+  async read(model, ids, fields = []) { return this.execute(model, "read", [ids], { fields }); }
 
   async getUserByEmail(email) {
-    const users = await this.searchRead(
-      "res.users",
-      [["login", "=", email]],
-      ["id", "name", "login", "groups_id", "partner_id"],
-      1
-    );
+    const users = await this.searchRead("res.users", [["login", "=", email]], ["id", "name", "login", "groups_id", "partner_id"], 1);
     return users[0] || null;
   }
 
-  // Health check
   async ping() {
     try {
-      const cfg = await OdooConfigService.getOdooConfig();
+      const { odooConfig } = await this._getClients();
       await this.getAdminUid();
-      return { connected: true, host: cfg.host, db: cfg.db };
+      return { connected: true, host: odooConfig.host, db: odooConfig.db };
     } catch (err) {
       return { connected: false, error: err.message };
     }

@@ -1,15 +1,11 @@
-// src/utils/jwt.js — Dynamic JWT using secret from Odoo System Parameters
-const jwt              = require("jsonwebtoken");
-const OdooConfigService = require("../config/OdooConfigService");
+// src/utils/jwt.js — JWT secret comes straight from JWT_SECRET (.env),
+// no more lookup against Odoo System Parameters.
+const jwt = require("jsonwebtoken");
+const { bootstrap } = require("../config/bootstrap");
 
-const generateToken = async (payload) => {
-  const { secret, expiresIn } = await OdooConfigService.getJwtConfig();
-  return jwt.sign(payload, secret, { expiresIn });
-};
+const generateToken = (payload) =>
+  jwt.sign(payload, bootstrap.jwt.secret, { expiresIn: bootstrap.jwt.expiresIn });
 
-const verifyToken = async (token) => {
-  const { secret } = await OdooConfigService.getJwtConfig();
-  return jwt.verify(token, secret);
-};
+const verifyToken = (token) => jwt.verify(token, bootstrap.jwt.secret);
 
 module.exports = { generateToken, verifyToken };

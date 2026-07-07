@@ -23,6 +23,7 @@ app.use("/api", rateLimit({
 }));
 
 app.use("/api/auth",      require("./routes/authRoutes"));
+app.use("/api/admin",     require("./routes/adminRoutes"));
 app.use("/api/odoo",      require("./routes/odooRoutes"));
 app.use("/api/dashboard", require("./routes/dashboardRoutes"));
 app.use("/api/sales",     require("./routes/salesRoutes"));
@@ -38,11 +39,18 @@ app.use("/api/analytics", require("./routes/analyticsRoutes"));
 
 app.get("/health", async (req, res) => {
   const odooStatus = await OdooService.ping();
-  const cfg        = await OdooConfigService.getConfig();
+  let legacyConfig = null;
+  try {
+    legacyConfig = await OdooConfigService.getConfig();
+  } catch {
+    // No legacy default Odoo configured — expected now, not an error.
+  }
   res.json({
     status: "ok",
     odoo:   odooStatus,
-    config: { source: "Odoo System Parameters", host: cfg.odoo.host, db: cfg.odoo.db },
+    legacyDefaultOdoo: legacyConfig
+      ? { host: legacyConfig.odoo.host, db: legacyConfig.odoo.db }
+      : "Not configured (BOOTSTRAP_ODOO_* not set) — fine as long as all traffic is tenant-scoped.",
   });
 });
 
@@ -50,18 +58,22 @@ app.use("*", (req, res) => res.status(404).json({ success: false, message: "Rout
 app.use(errorHandler);
 
 const start = async () => {
-  console.log("🔄 Loading ERP configuration from Odoo System Parameters...");
-  await OdooConfigService.loadFromOdoo();
+  // Legacy Odoo config is loaded best-effort — it no longer blocks startup,
+  // since real client traffic is resolved per-tenant via tenants.json.
+  try {
+    await OdooConfigService.loadFromOdoo();
+  } catch (err) {
+    console.warn(`⚠️  ${err.message}`);
+  }
 
   app.listen(bootstrap.server.port, "0.0.0.0", async () => {
     console.log(`🚀 Server running on port ${bootstrap.server.port} [${bootstrap.server.nodeEnv}]`);
     const status = await OdooService.ping();
     if (status.connected) {
-      console.log(`✅ Odoo connected → ${status.host} / ${status.db}`);
+      console.log(`✅ Legacy default Odoo connected → ${status.host} / ${status.db}`);
     } else {
-      console.warn(`⚠️  Odoo connection issue: ${status.error}`);
+      console.log(`ℹ️  No legacy default Odoo connection (this is fine — tenant logins don't need it).`);
     }
-    console.log(`🔁 Config auto-refreshes every ${bootstrap.server.refreshInterval / 60000} minutes`);
   });
 };
 
