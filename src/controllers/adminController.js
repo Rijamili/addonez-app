@@ -13,19 +13,68 @@ const { success, error } = require("../utils/response");
 // Verify the given Odoo credentials actually work BEFORE we save anything.
 // This is what turns "typo in the password" from a silent bad tenant into
 // an immediate, clear error at creation time.
+// const testOdooConnection = (odooConfig) => {
+//   const { host, port = 443, ssl = true, db, adminUsername, adminPassword } = odooConfig;
+//   const opts = { host, port };
+//   const common = ssl
+//     ? xmlrpc.createSecureClient({ ...opts, path: "/xmlrpc/2/common" })
+//     : xmlrpc.createClient({ ...opts, path: "/xmlrpc/2/common" });
+
+//   return new Promise((resolve, reject) => {
+//     common.methodCall("authenticate", [db, adminUsername, adminPassword, {}], (err, uid) => {
+//       if (err) return reject(new Error(`Could not reach Odoo: ${err.message}`));
+//       if (!uid) return reject(new Error("Odoo rejected the admin credentials."));
+//       resolve(uid);
+//     });
+//   });
+// };
 const testOdooConnection = (odooConfig) => {
-  const { host, port = 443, ssl = true, db, adminUsername, adminPassword } = odooConfig;
+  const {
+    host,
+    port = 443,
+    ssl = true,
+    db,
+    adminUsername,
+    adminPassword,
+  } = odooConfig;
+
+  console.log("===== TEST ODOO CONNECTION =====");
+  console.log({
+    host,
+    port,
+    ssl,
+    db,
+    adminUsername,
+    adminPassword,
+  });
+
   const opts = { host, port };
+
   const common = ssl
     ? xmlrpc.createSecureClient({ ...opts, path: "/xmlrpc/2/common" })
     : xmlrpc.createClient({ ...opts, path: "/xmlrpc/2/common" });
 
   return new Promise((resolve, reject) => {
-    common.methodCall("authenticate", [db, adminUsername, adminPassword, {}], (err, uid) => {
-      if (err) return reject(new Error(`Could not reach Odoo: ${err.message}`));
-      if (!uid) return reject(new Error("Odoo rejected the admin credentials."));
-      resolve(uid);
-    });
+    common.methodCall(
+      "authenticate",
+      [db, adminUsername, adminPassword, {}],
+      (err, uid) => {
+        console.log("XMLRPC ERROR:", err);
+        console.log("XMLRPC UID:", uid);
+
+        if (err) {
+          return reject(new Error(`Could not reach Odoo: ${err.message}`));
+        }
+
+        if (!uid) {
+          return reject(
+            new Error("Odoo authenticate() returned false (uid = false).")
+          );
+        }
+
+        resolve(uid);
+      }
+    );
   });
 };
 
