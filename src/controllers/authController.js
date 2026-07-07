@@ -9,6 +9,9 @@ const login = async (req, res) => {
   const { email, password } = req.body;
 
   const tenant = TenantDirectory.findByEmail(email);
+  console.log("========== LOGIN ==========");
+console.log("Email:", email);
+console.log("Tenant:", tenant);
   if (!tenant) {
     return error(res, "We couldn't find an organization for that email. Contact your administrator.", 404);
   }

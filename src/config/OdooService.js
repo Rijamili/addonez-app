@@ -32,6 +32,11 @@ class OdooService {
 
   async _getClients() {
     const { key, odooConfig } = await this._resolveActiveConfig();
+    console.log("Using tenant key:", key);
+console.log("Host:", odooConfig.host);
+console.log("Database:", odooConfig.db);
+    
+    
     if (!this._clientsByTenant.has(key)) {
       this._clientsByTenant.set(key, this._buildClients(odooConfig));
     }
