@@ -96,10 +96,15 @@ class OdooService {
   async read(model, ids, fields = []) { return this.execute(model, "read", [ids], { fields }); }
 
   async getUserByEmail(email) {
-    const users = await this.searchRead("res.users", [["login", "=", email]], ["id", "name", "login", "groups_id", "partner_id"], 1);
-    return users[0] || null;
-  }
+  const users = await this.searchRead(
+    "res.users",
+    [["login", "=", email]],
+    ["id", "name"],
+    1
+  );
 
+  return users[0] || null;
+}
   async ping() {
     try {
       const { odooConfig } = await this._getClients();
