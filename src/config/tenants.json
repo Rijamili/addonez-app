@@ -2,14 +2,14 @@
   "tenants": [
     {
       "id": "addonez-demo",
-      "name": "HCare",
+      "name": "Addonez Demo",
       "odoo": {
-        "host": "erp.hcare.plus",
-        "db": "hcare_live",
+        "host": "demo.addonez.com",
+        "db": "demo_live",
         "port": 443,
         "ssl": true,
         "adminUsername": "info@addonez.com",
-        "adminPassword": "6.G4yzXRi-(2\""
+        "adminPassword": "rt71QD7q8uPh"
       },
       "users": [
         "info@addonez.com"
