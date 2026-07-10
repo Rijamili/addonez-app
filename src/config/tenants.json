@@ -1,0 +1,19 @@
+{
+  "tenants": [
+    {
+      "id": "addonez-demo",
+      "name": "Addonez Demo",
+      "odoo": {
+        "host": "demo.addonez.com",
+        "db": "demo_live",
+        "port": 443,
+        "ssl": true,
+        "adminUsername": "info@addonez.com",
+        "adminPassword": "rt71QD7q8uPh"
+      },
+      "users": [
+        "info@addonez.com"
+      ]
+    }
+  ]
+}
