@@ -26,6 +26,7 @@ app.use("/api/auth",      require("./routes/authRoutes"));
 app.use("/api/admin",     require("./routes/adminRoutes"));
 app.use("/api/odoo",      require("./routes/odooRoutes"));
 app.use("/api/dashboard", require("./routes/dashboardRoutes"));
+app.use("/api/modules",   require("./routes/modulesRoutes"));
 app.use("/api/sales",     require("./routes/salesRoutes"));
 app.use("/api/finance",   require("./routes/financeRoutes"));
 
