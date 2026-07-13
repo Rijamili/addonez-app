@@ -37,6 +37,7 @@ app.use("/api/manufacturing", require("./routes/manufacturingRoutes"));
 app.use("/api/projects",  require("./routes/projectRoutes"));
 app.use("/api/profile",   require("./routes/profileRoutes"));
 app.use("/api/analytics", require("./routes/analyticsRoutes"));
+app.use("/api/notifications", require("./routes/notificationsRoutes"));
 
 app.get("/health", async (req, res) => {
   const odooStatus = await OdooService.ping();
