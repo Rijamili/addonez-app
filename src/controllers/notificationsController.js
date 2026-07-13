@@ -16,7 +16,7 @@ exports.getNotifications = async (req, res, next) => {
     const data = activities.map((item) => ({
       id: item.id,
       title: item.summary || "Activity",
-      note: item.note || "",
+      note: (item.note || "").replace(/<[^>]*>/g, ""),
       deadline: item.date_deadline,
       state: item.state,
     }));

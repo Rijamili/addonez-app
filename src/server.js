@@ -8,6 +8,7 @@ const { bootstrap, validateBootstrap } = require("./config/bootstrap");
 const OdooConfigService = require("./config/OdooConfigService");
 const OdooService       = require("./config/OdooService");
 const errorHandler      = require("./middleware/errorHandler");
+const securityRoutes = require("./routes/securityRoutes");
 
 validateBootstrap();
 
@@ -38,6 +39,8 @@ app.use("/api/projects",  require("./routes/projectRoutes"));
 app.use("/api/profile",   require("./routes/profileRoutes"));
 app.use("/api/analytics", require("./routes/analyticsRoutes"));
 app.use("/api/notifications", require("./routes/notificationsRoutes"));
+app.use("/api/security", securityRoutes);
+app.use("/api/version", require("./routes/versionRoutes"));
 
 app.get("/health", async (req, res) => {
   const odooStatus = await OdooService.ping();
