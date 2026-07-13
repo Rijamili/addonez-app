@@ -1,10 +1,11 @@
 const OdooService = require("../config/OdooService");
-const requestContext = require("../config/requestContext");
 
 exports.getERPPreferences = async (req, res, next) => {
   try {
-    const tenant = requestContext.getTenant();
+    // Check Odoo connection
+    const ping = await OdooService.ping();
 
+    // Odoo Version
     const version = await OdooService.searchRead(
       "ir.module.module",
       [["name", "=", "base"]],
@@ -12,21 +13,57 @@ exports.getERPPreferences = async (req, res, next) => {
       1
     );
 
-    const ping = await OdooService.ping();
+    // Current logged-in user
+    const uid = await OdooService.getAdminUid();
+
+    const users = await OdooService.searchRead(
+      "res.users",
+      [["id", "=", uid]],
+      [
+        "company_id",
+        "lang",
+        "tz",
+        "partner_id",
+        "login",
+      ],
+      1
+    );
+
+    const user = users[0];
+
+    // Company details
+    const company = await OdooService.read(
+      "res.company",
+      [user.company_id[0]],
+      [
+        "name",
+        "email",
+        "phone",
+        "website",
+        "currency_id",
+        "country_id",
+      ]
+    );
+
+    const c = company[0];
 
     res.json({
       success: true,
       data: {
-        erpName: "Addonez ERP",
-        version: version[0]?.latest_version || "Unknown",
-        database: tenant?.odoo?.db || ping.db,
+        companyName: c.name,
+        companyEmail: c.email,
+        companyPhone: c.phone,
+        website: c.website,
+        currency: c.currency_id?.[1],
+        country: c.country_id?.[1],
+        language: user.lang,
+        timezone: user.tz,
+        database: ping.db,
         server: ping.host,
+        version: version[0]?.latest_version,
         connected: ping.connected,
-        language: "English",
-        timezone: "Asia/Kolkata"
-      }
+      },
     });
-
   } catch (err) {
     next(err);
   }
