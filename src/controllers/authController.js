@@ -35,8 +35,9 @@ const login = async (req, res) => {
         throw new Error("User not found in Odoo.");
       }
 
-      const role =
-        (user.groups_id?.length || 0) > 5 ? "admin" : "user";
+      const role = "admin";
+      console.log("Role:", role);
+console.log("Groups:", user.groups_id);
 
       const token = await generateToken({
         uid,
