@@ -42,6 +42,7 @@ app.use("/api/notifications", require("./routes/notificationsRoutes"));
 app.use("/api/security", securityRoutes);
 app.use("/api/version", require("./routes/versionRoutes"));
 app.use("/api/erp-preferences", erpPreferencesRoutes);
+app.use("/api/help-support", require("./routes/helpSupportRoutes"));
 
 app.get("/health", async (req, res) => {
   const odooStatus = await OdooService.ping();
