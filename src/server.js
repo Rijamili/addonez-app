@@ -9,7 +9,7 @@ const OdooConfigService = require("./config/OdooConfigService");
 const OdooService       = require("./config/OdooService");
 const errorHandler      = require("./middleware/errorHandler");
 const securityRoutes = require("./routes/securityRoutes");
-
+const erpPreferencesRoutes = require("./routes/erpPreferencesRoutes");
 validateBootstrap();
 
 const app = express();
@@ -41,6 +41,7 @@ app.use("/api/analytics", require("./routes/analyticsRoutes"));
 app.use("/api/notifications", require("./routes/notificationsRoutes"));
 app.use("/api/security", securityRoutes);
 app.use("/api/version", require("./routes/versionRoutes"));
+app.use("/api/erp-preferences", erpPreferencesRoutes);
 
 app.get("/health", async (req, res) => {
   const odooStatus = await OdooService.ping();
