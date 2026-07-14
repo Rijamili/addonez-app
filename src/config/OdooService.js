@@ -110,7 +110,7 @@ console.log("Database:", odooConfig.db);
   const users = await this.searchRead(
     "res.users",
     [["login", "=", email]],
-    ["id", "name", "login", "partner_id", "groups_id"],
+    ["id", "name", "login", "partner_id"],
     1
   );
 

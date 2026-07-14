@@ -101,7 +101,7 @@ router.get("/products", asyncRoute(async (req, res) => {
 router.get("/profile", asyncRoute(async (req, res) => {
   const uid  = await odoo.authenticate(req);
   const user = await odoo.execute(req, uid, "res.users", "read", [[uid]],
-    { fields: ["name", "login", "groups_id"] });
+    { fields: ["name", "login"] });
   res.json({ name: user[0].name, email: user[0].login });
 }));
 
