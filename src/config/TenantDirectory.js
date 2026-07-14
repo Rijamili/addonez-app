@@ -86,52 +86,97 @@ async load() {
   return tenant;
 }
   async addUserEmail(tenantId, email) {
-    const tenant = this._byId.get(tenantId);
-    if (!tenant) throw new Error(`Tenant "${tenantId}" not found.`);
+  const tenant = this._byId.get(tenantId);
 
-    const key = email.trim().toLowerCase();
-    if (this._byEmail.has(key)) {
-      throw new Error(`Email "${key}" is already registered (tenant "${this._byEmail.get(key).id}").`);
-    }
-
-    tenant.users = tenant.users || [];
-    tenant.users.push(key);
-    await this._persist();
-    return tenant;
+  if (!tenant) {
+    throw new Error(`Tenant "${tenantId}" not found.`);
   }
+
+  const key = email.trim().toLowerCase();
+
+  const exists = await TenantUser.findOne({
+    where: { email: key },
+  });
+
+  if (exists) {
+    throw new Error(`Email "${key}" is already registered.`);
+  }
+
+  await TenantUser.create({
+    tenant_id: tenantId,
+    email: key,
+  });
+
+  await this.load();
+
+  return this._byId.get(tenantId);
+}
 
   async removeUserEmail(tenantId, email) {
-    const tenant = this._byId.get(tenantId);
-    if (!tenant) throw new Error(`Tenant "${tenantId}" not found.`);
+  const key = email.trim().toLowerCase();
 
-    const key = email.trim().toLowerCase();
-    tenant.users = (tenant.users || []).filter((e) => e !== key);
-    await this._persist();
-    return tenant;
-  }
+  await TenantUser.destroy({
+    where: {
+      tenant_id: tenantId,
+      email: key,
+    },
+  });
+
+  await this.load();
+
+  return this._byId.get(tenantId);
+}
 
   // Partial update — only overwrites the fields actually passed in.
   // e.g. updateTenant("addonez-live", { odoo: { adminPassword: "new" } })
   // changes just the password, leaving host/db/everything else untouched.
-  async updateTenant(tenantId, { name, odoo } = {}) {
-    const tenant = this._byId.get(tenantId);
-    if (!tenant) throw new Error(`Tenant "${tenantId}" not found.`);
+ async updateTenant(tenantId, { name, odoo } = {}) {
+  const tenant = await Tenant.findOne({
+    where: {
+      tenant_id: tenantId,
+    },
+  });
 
-    if (name) tenant.name = name;
-    if (odoo) {
-      tenant.odoo = {
-        ...tenant.odoo,
-        ...(odoo.host && { host: odoo.host }),
-        ...(odoo.db && { db: odoo.db }),
-        ...(odoo.port && { port: odoo.port }),
-        ...(odoo.ssl !== undefined && { ssl: odoo.ssl }),
-        ...(odoo.adminUsername && { adminUsername: odoo.adminUsername }),
-        ...(odoo.adminPassword && { adminPassword: odoo.adminPassword }),
-      };
-    }
-
-    await this._persist();
-    return tenant;
+  if (!tenant) {
+    throw new Error(`Tenant "${tenantId}" not found.`);
   }
+
+  const updateData = {};
+
+  if (name) updateData.company_name = name;
+
+  if (odoo) {
+    if (odoo.host) updateData.host = odoo.host;
+    if (odoo.db) updateData.database_name = odoo.db;
+    if (odoo.port) updateData.port = odoo.port;
+    if (odoo.ssl !== undefined) updateData.ssl = odoo.ssl;
+    if (odoo.adminUsername) updateData.admin_email = odoo.adminUsername;
+    if (odoo.adminPassword) updateData.admin_password = odoo.adminPassword;
+  }
+
+  await tenant.update(updateData);
+
+  await this.load();
+
+  return this._byId.get(tenantId);
+}
+  findByEmail(email) {
+  if (!email) return null;
+
+  return this._byEmail.get(email.trim().toLowerCase()) || null;
+}
+
+findById(id) {
+  return this._byId.get(id) || null;
+}
+
+list() {
+  return this._tenants;
+}
+
+async reload() {
+  await this.load();
+  return this._tenants;
+}
 }
 module.exports = new TenantDirectory();
