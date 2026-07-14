@@ -14,9 +14,7 @@ validateBootstrap();
 const sequelize = require("./config/database");
 const Tenant = require("./models/Tenant");
 require("./models/TenantUser");
-sequelize.sync().then(() => {
-    console.log("✅ Database Synced");
-});
+
 const app = express();
 app.set("trust proxy", 1);
 
@@ -30,6 +28,7 @@ app.use("/api", rateLimit({
 
 app.use("/api/auth",      require("./routes/authRoutes"));
 app.use("/api/admin",     require("./routes/adminRoutes"));
+app.use("/api/bootstrap", require("./routes/bootstrapRoutes"));
 app.use("/api/odoo",      require("./routes/odooRoutes"));
 app.use("/api/dashboard", require("./routes/dashboardRoutes"));
 app.use("/api/modules",   require("./routes/modulesRoutes"));
@@ -48,6 +47,7 @@ app.use("/api/security", securityRoutes);
 app.use("/api/version", require("./routes/versionRoutes"));
 app.use("/api/erp-preferences", erpPreferencesRoutes);
 app.use("/api/help-support", require("./routes/helpSupportRoutes"));
+
 
 app.get("/health", async (req, res) => {
   const odooStatus = await OdooService.ping();
@@ -70,26 +70,46 @@ app.use("*", (req, res) => res.status(404).json({ success: false, message: "Rout
 app.use(errorHandler);
 
 const start = async () => {
-  // Legacy Odoo config is loaded best-effort — it no longer blocks startup,
-  // since real client traffic is resolved per-tenant via tenants.json.
+  // Connect PostgreSQL first
+  try {
+    await sequelize.authenticate();
+    console.log("✅ Database Authentication Successful");
+
+    await sequelize.sync();
+    console.log("✅ Database Synced");
+  } catch (err) {
+    console.error("❌ Database Startup Error");
+    throw err;
+  }
+
+  // Load legacy Odoo config
   try {
     await OdooConfigService.loadFromOdoo();
   } catch (err) {
-    console.warn(`⚠️  ${err.message}`);
+    console.warn(`⚠️ ${err.message}`);
   }
 
+  // Start Express server
   app.listen(bootstrap.server.port, "0.0.0.0", async () => {
-    console.log(`🚀 Server running on port ${bootstrap.server.port} [${bootstrap.server.nodeEnv}]`);
+    console.log(
+      `🚀 Server running on port ${bootstrap.server.port} [${bootstrap.server.nodeEnv}]`
+    );
+
     const status = await OdooService.ping();
+
     if (status.connected) {
-      console.log(`✅ Legacy default Odoo connected → ${status.host} / ${status.db}`);
+      console.log(
+        `✅ Legacy default Odoo connected → ${status.host} / ${status.db}`
+      );
     } else {
-      console.log(`ℹ️  No legacy default Odoo connection (this is fine — tenant logins don't need it).`);
+      console.log(
+        `ℹ️ No legacy default Odoo connection (tenant logins still work).`
+      );
     }
   });
 };
 
 start().catch((err) => {
-  console.error("Fatal startup error:", err.message);
+  console.error("Fatal startup error:", err);
   process.exit(1);
 });
