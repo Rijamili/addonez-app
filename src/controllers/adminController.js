@@ -180,27 +180,11 @@ const updateTenant = async (req, res) => {
   }
 };
 
-// POST /api/admin/tenants/:tenantId/domains
-// body: { domain }  e.g. { "domain": "addonez.com" }
-const addDomain = async (req, res) => {
-  const { tenantId } = req.params;
-  const { domain } = req.body;
 
-  const tenant = TenantDirectory.getById(tenantId);
-  if (!tenant) return error(res, `Tenant "${tenantId}" not found.`, 404);
-
-  try {
-    await TenantDirectory.addDomain(tenantId, domain);
-    return success(res, { tenantId, domain: domain.trim().toLowerCase() },
-      "Domain added — anyone with a valid Odoo account at this domain can now log in without being added individually.", 201);
-  } catch (err) {
-    return error(res, err.message, 409);
-  }
-};
 
 // GET /api/admin/tenants
 const listTenants = async (req, res) => {
   return success(res, TenantDirectory.list());
 };
 
-module.exports = { createTenant, updateTenant, addUser, removeUser, addDomain, listTenants };
+module.exports = { createTenant, updateTenant, addUser, removeUser, listTenants };

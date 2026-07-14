@@ -2,7 +2,7 @@
 const express  = require("express");
 const router   = express.Router();
 const { body, param } = require("express-validator");
-const { createTenant, updateTenant, addUser, removeUser, addDomain, listTenants } = require("../controllers/adminController");
+const { createTenant, updateTenant, addUser, removeUser, listTenants } = require("../controllers/adminController");
 const { authenticate, authorize } = require("../middleware/auth");
 const { validate } = require("../middleware/validate");
 
@@ -49,10 +49,7 @@ router.post("/tenants/:tenantId/users",
   addUser
 );
 
-router.post("/tenants/:tenantId/domains",
-  [param("tenantId").notEmpty(), body("domain").isString().trim().notEmpty(), validate],
-  addDomain
-);
+
 
 router.delete("/tenants/:tenantId/users/:email",
   [param("tenantId").notEmpty(), param("email").isEmail(), validate],
