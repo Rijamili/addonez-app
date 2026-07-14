@@ -14,6 +14,24 @@
       "users": [
         "info@addonez.com"
       ]
+    },
+    {
+      "id": "ziya",
+      "name": "Ziya",
+      "odoo": {
+        "host": "ziya.addonez.com",
+        "db": "ziya_live",
+        "port": 443,
+        "ssl": true,
+        "adminUsername": "sandra04@ziya.com",
+        "adminPassword": "sandra%44"
+      },
+      "users": [
+        "sandra04@ziya.com"
+      ],
+      "domains": [
+        "ziya.com"
+      ]
     }
   ]
 }
