@@ -1,8 +1,7 @@
-// src/middleware/auth.js
 const { verifyToken } = require("../utils/jwt");
-const { error }       = require("../utils/response");
+const { error } = require("../utils/response");
 const TenantDirectory = require("../config/TenantDirectory");
-const requestContext  = require("../config/requestContext");
+const requestContext = require("../config/requestContext");
 
 const authenticate = async (req, res, next) => {
   const header = req.headers.authorization;
@@ -22,7 +21,8 @@ const authenticate = async (req, res, next) => {
     return error(res, "Invalid or expired token.", 401);
   }
 
-  const tenant = TenantDirectory.getById(req.user.tenantId);
+  // ✅ FIXED LINE
+  const tenant = TenantDirectory.findById(req.user.tenantId);
 
   if (!tenant) {
     return error(res, "Tenant not found.", 403);
@@ -33,7 +33,6 @@ const authenticate = async (req, res, next) => {
 };
 
 const authorize = (...roles) => (req, res, next) => {
-
   console.log("Required Roles:", roles);
   console.log("User Role:", req.user.role);
 
