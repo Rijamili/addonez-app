@@ -46,7 +46,10 @@ console.log("=================================");
         adminUsername: t.admin_email,
         adminPassword: t.admin_password,
       },
-      users: users.map(u => u.email),
+      users: [
+  t.admin_email,
+  ...users.map(u => u.email),
+].filter(Boolean),
     };
 
     this._tenants.push(tenant);
