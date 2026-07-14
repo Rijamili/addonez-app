@@ -12,7 +12,9 @@ const securityRoutes = require("./routes/securityRoutes");
 const erpPreferencesRoutes = require("./routes/erpPreferencesRoutes");
 validateBootstrap();
 const sequelize = require("./config/database");
+const TenantDirectory = require("./config/TenantDirectory");
 const Tenant = require("./models/Tenant");
+
 require("./models/TenantUser");
 
 const app = express();
@@ -70,18 +72,69 @@ app.use("*", (req, res) => res.status(404).json({ success: false, message: "Rout
 app.use(errorHandler);
 
 const start = async () => {
-  // Connect PostgreSQL first
   try {
     await sequelize.authenticate();
     console.log("✅ Database Authentication Successful");
 
+    const [rows] = await sequelize.query(`
+SELECT
+    current_database(),
+    current_user,
+    inet_server_addr(),
+    inet_server_port();
+`);
+
+console.log(rows);
+
+const [tables] = await sequelize.query(`
+SELECT table_name
+FROM information_schema.tables
+WHERE table_schema='public';
+`);
+
+console.log("TABLES:", tables);
+
+const [tenants] = await sequelize.query(`
+SELECT * FROM tenants;
+`);
+
+console.log("TENANTS:", tenants);
+
+    console.log("Connected Database:", rows);
+    const [tenantRows] = await sequelize.query(`
+  SELECT id, tenant_id, company_name
+  FROM tenants;
+`);
+
+console.log("RAW SQL TENANTS:", tenantRows);
+const [serverInfo] = await sequelize.query(`
+  SELECT inet_server_addr(), inet_server_port();
+`);
+
+console.log("SERVER:", serverInfo);
+
     await sequelize.sync();
     console.log("✅ Database Synced");
+
+    await TenantDirectory.reload();
+    console.log("✅ Tenant Directory Reloaded");
+
   } catch (err) {
     console.error("❌ Database Startup Error");
     throw err;
   }
+app.get("/debug/tenants", async (req, res) => {
+  const Tenant = require("./models/Tenant");
 
+  const count = await Tenant.count();
+  const rows = await Tenant.findAll({ raw: true });
+
+  res.json({
+    count,
+    rows,
+  });
+});
+ 
   // Load legacy Odoo config
   try {
     await OdooConfigService.loadFromOdoo();

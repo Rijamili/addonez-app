@@ -13,7 +13,15 @@ class TenantDirectory {
   }
 
 async load() {
-  const tenants = await Tenant.findAll();
+  const tenants = await Tenant.findAll({
+  raw: true,
+});
+
+console.log("=================================");
+console.log("TENANTS FROM SEQUELIZE:");
+console.log(tenants);
+console.log("COUNT:", tenants.length);
+console.log("=================================");
 
   this._tenants = [];
   this._byEmail = new Map();
