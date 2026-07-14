@@ -23,11 +23,11 @@
         "db": "ziya_live",
         "port": 443,
         "ssl": true,
-        "adminUsername": "sandra04@ziya.com",
+        "adminUsername": "Sandra04@ziya.com",
         "adminPassword": "sandra%44"
       },
       "users": [
-        "sandra04@ziya.com"
+        "Sandra04@ziya.com"
       ],
       "domains": [
         "ziya.com"
