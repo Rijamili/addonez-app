@@ -43,24 +43,8 @@ const cacheKeyFor = (req) => `${req.tenant?.id || "unknown"}:${req.user?.odooUse
 // backend-only technical module), we fail OPEN rather than hiding a
 // screen the person may legitimately need — better a false show than a
 // silently missing feature nobody can figure out how to re-enable.
-async function isModuleAccessibleToUser(odooModuleName, userGroupIds) {
-  const menuLinks = await odoo.searchRead(
-    "ir.model.data",
-    [["module", "=", odooModuleName], ["model", "=", "ir.ui.menu"]],
-    ["res_id"],
-    1000
-  );
-  if (!menuLinks.length) return true;
-
-  const menuIds = menuLinks.map((m) => m.res_id);
-  const menus = await odoo.read("ir.ui.menu", menuIds, ["groups_id"]);
-
-  const userGroupSet = new Set(userGroupIds);
-  return menus.some((menu) => {
-    const restrictedTo = menu.groups_id || [];
-    if (restrictedTo.length === 0) return true; // open to everyone
-    return restrictedTo.some((gid) => userGroupSet.has(gid));
-  });
+async function isModuleAccessibleToUser() {
+    return true;
 }
 
 const getModules = async (req, res) => {
@@ -114,14 +98,13 @@ console.log([...installed]);
         if (entry.always) {
           visible = true;
         } else if (entry.odooModule) {
-          visible = installed.has(entry.odooModule) && (await checkAccess(entry.odooModule));
+         visible = installed.has(entry.odooModule);
         } else if (entry.requiresAnyOf) {
           const installedMatches = entry.requiresAnyOf.filter((m) => installed.has(m));
           if (!installedMatches.length) {
             visible = false;
           } else {
-            const accessChecks = await Promise.all(installedMatches.map(checkAccess));
-            visible = accessChecks.some(Boolean);
+            visible = installedMatches.length > 0;
           }
         } else {
           visible = false;
