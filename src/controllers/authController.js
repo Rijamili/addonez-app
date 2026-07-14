@@ -47,6 +47,10 @@ console.log("Groups:", user.groups_id);
         role,
         partnerId: user.partner_id?.[0],
         tenantId: tenant.id,
+        // Odoo's res.groups ids for this user — modulesController uses
+        // this to decide which side-menu items THIS user can see, on
+        // top of which Odoo apps are installed for the tenant overall.
+        groupIds: user.groups_id || [],
       });
 
       return {

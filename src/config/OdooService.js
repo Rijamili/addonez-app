@@ -101,10 +101,16 @@ console.log("Database:", odooConfig.db);
   async read(model, ids, fields = []) { return this.execute(model, "read", [ids], { fields }); }
 
   async getUserByEmail(email) {
+  // NOTE: this used to only fetch ["id", "name"], but authController and
+  // modulesController both read user.login, user.partner_id, and
+  // user.groups_id off the result — those were silently coming back as
+  // undefined (no error, just missing data), which meant the JWT's
+  // "email" field was always undefined and per-user Odoo group
+  // permission checks had nothing to check against.
   const users = await this.searchRead(
     "res.users",
     [["login", "=", email]],
-    ["id", "name"],
+    ["id", "name", "login", "partner_id", "groups_id"],
     1
   );
 

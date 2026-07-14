@@ -82,6 +82,16 @@ const installed = new Set(installedRows.map((m) => m.name));
 
 console.log("Installed Modules:");
 console.log([...installed]);
+
+    // req.user.groupIds comes from the JWT (set at login from the
+    // user's res.users.groups_id). This used to be undefined here —
+    // isModuleAccessibleToUser was defined but never actually called
+    // with real data, so "Permitted" (step 2 in the comment above) was
+    // silently skipped and only "Installed" (step 1) ever ran. That
+    // meant every module installed for the tenant showed for every
+    // user, regardless of that user's own Odoo group restrictions.
+    const userGroupIds = req.user?.groupIds || [];
+
     // Cache accessibility checks per Odoo module name within this single
     // request/cache window, since crm/manufacturing/finance may each be
     // asked about separately but the underlying menu lookup is the same
@@ -104,13 +114,14 @@ console.log([...installed]);
         if (entry.always) {
           visible = true;
         } else if (entry.odooModule) {
-          visible = installed.has(entry.odooModule);
+          visible = installed.has(entry.odooModule) && (await checkAccess(entry.odooModule));
         } else if (entry.requiresAnyOf) {
           const installedMatches = entry.requiresAnyOf.filter((m) => installed.has(m));
           if (!installedMatches.length) {
             visible = false;
           } else {
-            visible = installedMatches.length > 0;
+            const accessChecks = await Promise.all(installedMatches.map(checkAccess));
+            visible = accessChecks.some(Boolean);
           }
         } else {
           visible = false;
