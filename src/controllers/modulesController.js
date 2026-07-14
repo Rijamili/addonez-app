@@ -78,6 +78,10 @@ const getModules = async (req, res) => {
 
     const installed = new Set(installedRows.map((m) => m.name));
     const userGroupIds = userRows[0]?.groups_id || [];
+    console.log("===== MODULE DEBUG =====");
+console.log("User:", req.user);
+console.log("Installed Modules:", [...installed]);
+console.log("User Groups:", userGroupIds);
 
     // Cache accessibility checks per Odoo module name within this single
     // request/cache window, since crm/manufacturing/finance may each be
