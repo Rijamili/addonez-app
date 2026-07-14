@@ -71,18 +71,17 @@ const getModules = async (req, res) => {
   }
 
   try {
-    const [installedRows, userRows] = await Promise.all([
-      odoo.searchRead("ir.module.module", [["state", "=", "installed"]], ["name"], 500),
-      odoo.read("res.users", [req.user.odooUserId], ["groups_id"]),
-    ]);
+   const installedRows = await odoo.searchRead(
+  "ir.module.module",
+  [["state", "=", "installed"]],
+  ["name"],
+  500
+);
 
-    const installed = new Set(installedRows.map((m) => m.name));
-    const userGroupIds = userRows[0]?.groups_id || [];
-    console.log("===== MODULE DEBUG =====");
-console.log("User:", req.user);
-console.log("Installed Modules:", [...installed]);
-console.log("User Groups:", userGroupIds);
+const installed = new Set(installedRows.map((m) => m.name));
 
+console.log("Installed Modules:");
+console.log([...installed]);
     // Cache accessibility checks per Odoo module name within this single
     // request/cache window, since crm/manufacturing/finance may each be
     // asked about separately but the underlying menu lookup is the same
@@ -105,14 +104,13 @@ console.log("User Groups:", userGroupIds);
         if (entry.always) {
           visible = true;
         } else if (entry.odooModule) {
-          visible = installed.has(entry.odooModule) && (await checkAccess(entry.odooModule));
+          visible = installed.has(entry.odooModule);
         } else if (entry.requiresAnyOf) {
           const installedMatches = entry.requiresAnyOf.filter((m) => installed.has(m));
           if (!installedMatches.length) {
             visible = false;
           } else {
-            const accessChecks = await Promise.all(installedMatches.map(checkAccess));
-            visible = accessChecks.some(Boolean);
+            visible = installedMatches.length > 0;
           }
         } else {
           visible = false;
