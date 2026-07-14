@@ -12,17 +12,20 @@
 //                    app's menu open to everyone? (ir.ui.menu groups_id,
 //                    cross-referenced against the user's res.users groups_id)
 //
-// Both checks run through the existing OdooService/requestContext, so
-// this automatically stays tenant-scoped exactly like every other
-// controller in the app — nothing new to configure per client.
+// Both checks (and the MODULE_REGISTRY walk itself) now live in
+// config/moduleAccessService.js, shared with the requireModule route
+// guard — so the screens the app shows and what the API actually allows
+// can never quietly drift apart.
 //
 // Same shape for every tenant, every client, every APK build:
 //   { success: true, data: { modules: [ { id, key, name, icon }, ... ] } }
 
-const odoo = require("../config/OdooService");
-const { MODULE_REGISTRY } = require("../config/moduleRegistry");
 const { success, error } = require("../utils/response");
-const requestContext = require("../config/requestContext");
+const {
+  getInstalledModules,
+  invalidateInstalledCache,
+  resolveAllModules,
+} = require("../config/moduleAccessService");
 
 // Short-lived cache so a dashboard that re-polls or a user opening the
 // drawer repeatedly doesn't re-run several Odoo round trips every time.
@@ -34,19 +37,6 @@ const _cache = new Map();
 
 const cacheKeyFor = (req) => `${req.tenant?.id || "unknown"}:${req.user?.odooUserId || "unknown"}`;
 
-// Every root menu Odoo registers for an app is tagged with the module
-// that shipped it via ir.model.data (module + res_id -> ir.ui.menu id).
-// We read that menu's groups_id to know who it's visible to:
-//   - empty groups_id  => visible to everyone with the app installed
-//   - non-empty        => visible only to users in one of those groups
-// If a module doesn't register any menu at all (rare, e.g. a
-// backend-only technical module), we fail OPEN rather than hiding a
-// screen the person may legitimately need — better a false show than a
-// silently missing feature nobody can figure out how to re-enable.
-async function isModuleAccessibleToUser() {
-    return true;
-}
-
 const getModules = async (req, res) => {
   const key = cacheKeyFor(req);
   const cached = _cache.get(key);
@@ -55,66 +45,20 @@ const getModules = async (req, res) => {
   }
 
   try {
-   const installedRows = await odoo.searchRead(
-  "ir.module.module",
-  [["state", "=", "installed"]],
-  ["name"],
-  500
-);
-
-const installed = new Set(installedRows.map((m) => m.name));
-
-console.log("Installed Modules:");
-console.log([...installed]);
+    const installed = await getInstalledModules(req.tenant?.id);
 
     // req.user.groupIds comes from the JWT (set at login from the
-    // user's res.users.groups_id). This used to be undefined here —
-    // isModuleAccessibleToUser was defined but never actually called
-    // with real data, so "Permitted" (step 2 in the comment above) was
-    // silently skipped and only "Installed" (step 1) ever ran. That
-    // meant every module installed for the tenant showed for every
-    // user, regardless of that user's own Odoo group restrictions.
+    // user's res.users.groups_id).
     const userGroupIds = req.user?.groupIds || [];
 
-    // Cache accessibility checks per Odoo module name within this single
-    // request/cache window, since crm/manufacturing/finance may each be
-    // asked about separately but the underlying menu lookup is the same
-    // shape of query.
-    const accessibilityCache = new Map();
-    const checkAccess = async (odooModuleName) => {
-      if (!accessibilityCache.has(odooModuleName)) {
-        accessibilityCache.set(
-          odooModuleName,
-          isModuleAccessibleToUser(odooModuleName, userGroupIds)
-        );
-      }
-      return accessibilityCache.get(odooModuleName);
-    };
+    const resolved = await resolveAllModules(installed, userGroupIds);
 
-    const results = await Promise.all(
-      MODULE_REGISTRY.map(async (entry, index) => {
-        let visible;
+    const modules = resolved
+      .map(({ entry, visible }, index) =>
+        visible ? { id: index + 1, key: entry.key, name: entry.name, icon: entry.icon } : null
+      )
+      .filter(Boolean);
 
-        if (entry.always) {
-          visible = true;
-        } else if (entry.odooModule) {
-         visible = installed.has(entry.odooModule);
-        } else if (entry.requiresAnyOf) {
-          const installedMatches = entry.requiresAnyOf.filter((m) => installed.has(m));
-          if (!installedMatches.length) {
-            visible = false;
-          } else {
-            visible = installedMatches.length > 0;
-          }
-        } else {
-          visible = false;
-        }
-
-        return visible ? { id: index + 1, key: entry.key, name: entry.name, icon: entry.icon } : null;
-      })
-    );
-
-    const modules = results.filter(Boolean);
     _cache.set(key, { modules, at: Date.now() });
     return success(res, { modules });
   } catch (err) {
@@ -123,9 +67,12 @@ console.log([...installed]);
 };
 
 // Lets an admin force a re-check (e.g. right after installing a new app
-// in Odoo) without waiting for the cache to expire.
+// in Odoo) without waiting for the cache to expire. Also clears the
+// shared installed-modules cache used by requireModule, so a freshly
+// installed app is immediately enforceable on the API side too.
 const refreshModules = async (req, res) => {
   _cache.delete(cacheKeyFor(req));
+  invalidateInstalledCache(req.tenant?.id);
   return getModules(req, res);
 };
 

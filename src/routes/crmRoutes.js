@@ -1,6 +1,7 @@
 const express = require("express");
 const router  = express.Router();
 const { authenticate } = require("../middleware/auth");
+const { requireModule } = require("../middleware/requireModule");
 const {
   getCrmSummary,
   getLeads,
@@ -13,14 +14,14 @@ const {
   getExecutiveDashboard,
 } = require("../controllers/crmController");
 
-router.get("/", authenticate, getCrmSummary);
-router.get("/leads", authenticate, getLeads);
-router.get("/opportunities", authenticate, getOpportunities);
-router.get("/sales-performance", authenticate, getSalesPerformance);
-router.get("/customers", authenticate, getCustomers);
-router.get("/activity", authenticate, getActivity);
-router.get("/revenue-forecast", authenticate, getRevenueForecast);
-router.get("/ai-predictive", authenticate, getAiPredictive);
-router.get("/executive-dashboard", authenticate, getExecutiveDashboard);
+router.get("/", authenticate, requireModule("crm"), getCrmSummary);
+router.get("/leads", authenticate, requireModule("crm"), getLeads);
+router.get("/opportunities", authenticate, requireModule("crm"), getOpportunities);
+router.get("/sales-performance", authenticate, requireModule("crm"), getSalesPerformance);
+router.get("/customers", authenticate, requireModule("crm"), getCustomers);
+router.get("/activity", authenticate, requireModule("crm"), getActivity);
+router.get("/revenue-forecast", authenticate, requireModule("crm"), getRevenueForecast);
+router.get("/ai-predictive", authenticate, requireModule("crm"), getAiPredictive);
+router.get("/executive-dashboard", authenticate, requireModule("crm"), getExecutiveDashboard);
 
 module.exports = router;
