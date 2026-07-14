@@ -10,8 +10,14 @@ const OdooService       = require("./config/OdooService");
 const errorHandler      = require("./middleware/errorHandler");
 const securityRoutes = require("./routes/securityRoutes");
 const erpPreferencesRoutes = require("./routes/erpPreferencesRoutes");
+const adminTenantRoutes = require("./routes/adminTenantRoutes");
 validateBootstrap();
+const sequelize = require("./config/database");
+const Tenant = require("./models/Tenant");
 
+sequelize.sync().then(() => {
+    console.log("✅ Database Synced");
+});
 const app = express();
 app.set("trust proxy", 1);
 
@@ -43,6 +49,7 @@ app.use("/api/security", securityRoutes);
 app.use("/api/version", require("./routes/versionRoutes"));
 app.use("/api/erp-preferences", erpPreferencesRoutes);
 app.use("/api/help-support", require("./routes/helpSupportRoutes"));
+app.use("/api/admin", adminTenantRoutes);
 
 app.get("/health", async (req, res) => {
   const odooStatus = await OdooService.ping();
