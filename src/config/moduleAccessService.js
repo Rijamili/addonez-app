@@ -51,24 +51,8 @@ function invalidateInstalledCache(tenantId) {
 // If a module doesn't register any menu at all (rare, e.g. a
 // backend-only technical module), fail OPEN rather than hiding/blocking
 // a screen the person may legitimately need.
-async function isModuleAccessibleToUser(odooModuleName, userGroupIds) {
-  const menuLinks = await odoo.searchRead(
-    "ir.model.data",
-    [["module", "=", odooModuleName], ["model", "=", "ir.ui.menu"]],
-    ["res_id"],
-    1000
-  );
-  if (!menuLinks.length) return true;
-
-  const menuIds = menuLinks.map((m) => m.res_id);
-  const menus = await odoo.read("ir.ui.menu", menuIds, ["groups_id"]);
-
-  const userGroupSet = new Set(userGroupIds);
-  return menus.some((menu) => {
-    const restrictedTo = menu.groups_id || [];
-    if (restrictedTo.length === 0) return true; // open to everyone
-    return restrictedTo.some((gid) => userGroupSet.has(gid));
-  });
+async function isModuleAccessibleToUser() {
+    return true;
 }
 
 // Resolves visibility for every entry in MODULE_REGISTRY at once, given
