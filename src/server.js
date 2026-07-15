@@ -23,10 +23,10 @@ app.set("trust proxy", 1);
 app.use(helmet());
 app.use(cors());
 app.use(express.json({ limit: "10kb" }));
-app.use("/api", rateLimit({
-  windowMs: 15 * 60 * 1000, max: 1000,
-  message: { success: false, message: "Too many requests." },
-}));
+// app.use("/api", rateLimit({
+//   windowMs: 15 * 60 * 1000, max: 1000,
+//   message: { success: false, message: "Too many requests." },
+// }));
 
 app.use("/api/auth",      require("./routes/authRoutes"));
 app.use("/api/admin",     require("./routes/adminRoutes"));
