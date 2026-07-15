@@ -35,8 +35,14 @@ const login = async (req, res) => {
         throw new Error("User not found in Odoo.");
       }
 
-      const role = "admin";
-      console.log("Role:", role);
+     let role = "user";
+
+// Super Admin + Tenant Admin
+if (user.login.toLowerCase() === "info@addonez.com") {
+  role = "super_admin";
+}
+
+console.log("Role:", role);
 console.log("Groups:", user.groups_id);
 
       const token = await generateToken({
