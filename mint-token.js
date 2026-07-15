@@ -1,7 +1,7 @@
 // mint-token.js
 const jwt = require("jsonwebtoken");
 
-const JWT_SECRET = "addonez_super_secret_key_2024"; // from .env or Render dashboard
+const JWT_SECRET = "2418ded1b12e7d52585e24f300ced1d945fbdbb389dcffa933a995fe9b8267b3e716762c6d11ff11a0d67818afd91a25ee8753e46c2148f64e5daf2f1e7979ac"; // from .env or Render dashboard
 
 const token = jwt.sign(
   {
