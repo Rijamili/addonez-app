@@ -87,6 +87,7 @@ console.log("Groups:", user.groups_id);
           id: tenant.id,
           name: tenant.name,
         },
+        aiInsightsUrl: process.env.AI_INSIGHTS_API_URL,
       },
       "Login successful"
     );
