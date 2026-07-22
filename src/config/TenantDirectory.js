@@ -3,6 +3,30 @@
 
 const Tenant = require("../models/Tenant");
 const TenantUser = require("../models/TenantUser");
+const axios = require("axios");
+
+// Auto-registers a tenant with the AI Insights service so no manual DB
+// insert is needed on their side. Failure here does NOT block tenant
+// creation — it's logged so it can be retried/fixed manually if needed.
+async function registerWithAiInsights(id, name) {
+  try {
+    await axios.post(
+      "https://insights-api.stage.addonez.com/api/admin/tenants/register",
+      { erp_tenant_id: id, name },
+      {
+        headers: { "X-Admin-Key": process.env.AI_INSIGHTS_ADMIN_KEY },
+        timeout: 5000,
+      }
+    );
+    console.log(`✅ Registered tenant "${id}" with AI Insights`);
+  } catch (err) {
+    console.error(
+      `⚠️  Failed to auto-register tenant "${id}" with AI Insights:`,
+      err.message,
+      "— will need manual mapping via their tenants.erp_tenant_id column."
+    );
+  }
+}
 
 class TenantDirectory {
   constructor() {
@@ -93,6 +117,9 @@ console.log("=================================");
   });
 
   await this.load();
+
+  // Auto-register with AI Insights so no manual DB mapping is needed.
+  registerWithAiInsights(id, name);
 
   return tenant;
 }
