@@ -67,7 +67,13 @@ app.get("/health", async (req, res) => {
       : "Not configured (BOOTSTRAP_ODOO_* not set) — fine as long as all traffic is tenant-scoped.",
   });
 });
+app.get("/", (req, res) => {
+  res.send("API is running");
+});
 
+app.get("/health", (req, res) => {
+  res.json({ status: "ok" });
+});
 app.use("*", (req, res) => res.status(404).json({ success: false, message: "Route not found." }));
 app.use(errorHandler);
 
