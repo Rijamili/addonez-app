@@ -10,7 +10,7 @@ const { validate } = require("../middleware/validate");
 // so only someone already logged in as an admin on an existing tenant can
 // manage other tenants. Consider restricting this further (e.g. a single
 // internal super-admin tenant) before exposing it outside your own team.
-router.use(authenticate, authorize("admin"));
+router.use(authenticate, authorize("admin", "super_admin"));
 
 router.get("/tenants", listTenants);
 
