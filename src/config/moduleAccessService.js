@@ -49,39 +49,82 @@ function invalidateInstalledCache(tenantId) {
 //   - empty groups_id  => visible to everyone with the app installed
 //   - non-empty        => visible only to users in one of those groups
 // If a module doesn't register any menu at all (rare, e.g. a
-// backend-only technical module), fail OPEN rather than hiding/blocking
-// a screen the person may legitimately need.
-async function isModuleAccessibleToUser() {
-    return true;
+// Resolving a group's external ID (e.g. "project.group_project_user") to
+// its actual numeric group id requires an Odoo query — cache it per
+// tenant so we're not doing this on every single request. Different
+// Odoo installs can (in theory) have different numeric ids for the same
+// named group, so this is NOT safe to hardcode or share across tenants.
+const _groupIdCache = new Map(); // tenantId -> Map(xmlId -> numericId | null)
+
+async function resolveGroupId(tenantId, xmlId) {
+  let tenantCache = _groupIdCache.get(tenantId);
+  if (!tenantCache) {
+    tenantCache = new Map();
+    _groupIdCache.set(tenantId, tenantCache);
+  }
+  if (tenantCache.has(xmlId)) return tenantCache.get(xmlId);
+
+  const [module, name] = xmlId.split(".");
+  let numericId = null;
+  try {
+    const rows = await odoo.searchRead(
+      "ir.model.data",
+      [["module", "=", module], ["name", "=", name]],
+      ["res_id"],
+      1
+    );
+    numericId = rows[0]?.res_id ?? null;
+  } catch {
+    // Odoo unreachable, or this group genuinely doesn't exist on this
+    // install (e.g. a community-edition tenant missing an enterprise-only
+    // group) — treat as "couldn't verify" rather than crash the request.
+    numericId = null;
+  }
+
+  tenantCache.set(xmlId, numericId);
+  return numericId;
+}
+
+function invalidateGroupIdCache(tenantId) {
+  _groupIdCache.delete(tenantId);
+}
+
+// Checks whether THIS specific logged-in user (via their own Odoo group
+// membership, from their JWT's groupIds) is actually permitted to use a
+// given module — not just "is it installed for the tenant overall".
+//
+// If a module has no groupXmlId configured (e.g. cross-module features
+// like Analytics), or the group can't be resolved for some reason, this
+// fails OPEN (allows access) rather than hiding a screen incorrectly —
+// same philosophy as before, just now actually enforcing real checks
+// where we have enough information to do so safely.
+async function isModuleAccessibleToUser(tenantId, groupXmlId, userGroupIds = []) {
+  if (!groupXmlId) return true;
+
+  const requiredGroupId = await resolveGroupId(tenantId, groupXmlId);
+  if (requiredGroupId == null) return true; // couldn't verify — fail open
+
+  return userGroupIds.includes(requiredGroupId);
 }
 
 // Resolves visibility for every entry in MODULE_REGISTRY at once, given
 // an already-fetched installed set + this user's groupIds. Used by
 // modulesController to build the full /api/modules list in one pass.
-async function resolveAllModules(installed, userGroupIds) {
-  const accessibilityCache = new Map();
-  const checkAccess = async (odooModuleName) => {
-    if (!accessibilityCache.has(odooModuleName)) {
-      accessibilityCache.set(odooModuleName, isModuleAccessibleToUser(odooModuleName, userGroupIds));
-    }
-    return accessibilityCache.get(odooModuleName);
-  };
-
+async function resolveAllModules(tenantId, installed, userGroupIds) {
   return Promise.all(
     MODULE_REGISTRY.map(async (entry) => {
       let visible;
       if (entry.always) {
         visible = true;
       } else if (entry.odooModule) {
-        visible = installed.has(entry.odooModule) && (await checkAccess(entry.odooModule));
+        visible =
+          installed.has(entry.odooModule) &&
+          (await isModuleAccessibleToUser(tenantId, entry.groupXmlId, userGroupIds));
       } else if (entry.requiresAnyOf) {
         const installedMatches = entry.requiresAnyOf.filter((m) => installed.has(m));
-        if (!installedMatches.length) {
-          visible = false;
-        } else {
-          const accessChecks = await Promise.all(installedMatches.map(checkAccess));
-          visible = accessChecks.some(Boolean);
-        }
+        visible =
+          installedMatches.length > 0 &&
+          (await isModuleAccessibleToUser(tenantId, entry.groupXmlId, userGroupIds));
       } else {
         visible = false;
       }
@@ -109,16 +152,13 @@ async function isKeyVisible(key, tenantId, userGroupIds) {
 
   if (entry.odooModule) {
     if (!installed.has(entry.odooModule)) return false;
-    return isModuleAccessibleToUser(entry.odooModule, userGroupIds || []);
+    return isModuleAccessibleToUser(tenantId, entry.groupXmlId, userGroupIds || []);
   }
 
   if (entry.requiresAnyOf) {
     const installedMatches = entry.requiresAnyOf.filter((m) => installed.has(m));
     if (!installedMatches.length) return false;
-    const accessChecks = await Promise.all(
-      installedMatches.map((m) => isModuleAccessibleToUser(m, userGroupIds || []))
-    );
-    return accessChecks.some(Boolean);
+    return isModuleAccessibleToUser(tenantId, entry.groupXmlId, userGroupIds || []);
   }
 
   return false;
@@ -128,6 +168,7 @@ module.exports = {
   MODULE_REGISTRY,
   getInstalledModules,
   invalidateInstalledCache,
+  invalidateGroupIdCache,
   isModuleAccessibleToUser,
   resolveAllModules,
   isKeyVisible,

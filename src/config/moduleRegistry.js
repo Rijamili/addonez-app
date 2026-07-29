@@ -19,20 +19,25 @@ const MODULE_REGISTRY = [
   // Always shown — not tied to any specific Odoo app being installed.
   { key: "dashboard", name: "Dashboard", icon: "home", always: true },
 
-  { key: "sales", name: "Sales", icon: "shopping-cart", odooModule: "sale" },
-  { key: "projects", name: "Projects", icon: "folder", odooModule: "project" },
+  // groupXmlId is Odoo's own standard external ID for "can use this app"
+  // (module.name_of_group, as seen in Odoo's own security/*.xml files).
+  // Resolved to a real numeric group id once per tenant (cached), then
+  // checked against the logged-in user's own groupIds from their JWT.
+  { key: "sales", name: "Sales", icon: "shopping-cart", odooModule: "sale", groupXmlId: "sales_team.group_sale_salesman" },
+  { key: "projects", name: "Projects", icon: "folder", odooModule: "project", groupXmlId: "project.group_project_user" },
 
   // "Finance" is the parent screen for accounting reports. It's driven by
   // the "account" app specifically (not crm/mrp) — crm/manufacturing are
   // separate entries below, even though today's UI nests their screens
   // inside the Finance stack for navigation purposes.
-  { key: "finance", name: "Finance", icon: "dollar-sign", odooModule: "account" },
-  { key: "crm", name: "CRM", icon: "users", odooModule: "crm" },
-  { key: "manufacturing", name: "Manufacturing", icon: "settings", odooModule: "mrp" },
+  { key: "finance", name: "Finance", icon: "dollar-sign", odooModule: "account", groupXmlId: "account.group_account_invoice" },
+  { key: "crm", name: "CRM", icon: "users", odooModule: "crm", groupXmlId: "sales_team.group_sale_salesman" },
+  { key: "manufacturing", name: "Manufacturing", icon: "settings", odooModule: "mrp", groupXmlId: "mrp.group_mrp_user" },
 
   // Cross-module features: only meaningful once there's sales or
   // financial data to analyze, so gated on either being present rather
-  // than tied to one specific Odoo app.
+  // than tied to one specific Odoo app. No groupXmlId — access here just
+  // follows whichever underlying module (sale/account) let it show at all.
   { key: "analytics", name: "Analytics", icon: "bar-chart-2", requiresAnyOf: ["sale", "account"] },
   { key: "predictions", name: "Predictions", icon: "trending-up", requiresAnyOf: ["sale", "account"] },
   { key: "ai_insights", name: "AI Insights", icon: "zap", requiresAnyOf: ["sale", "account"] },

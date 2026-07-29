@@ -51,7 +51,7 @@ const getModules = async (req, res) => {
     // user's res.users.groups_id).
     const userGroupIds = req.user?.groupIds || [];
 
-    const resolved = await resolveAllModules(installed, userGroupIds);
+    const resolved = await resolveAllModules(req.tenant?.id, installed, userGroupIds);
 
     const modules = resolved
       .map(({ entry, visible }, index) =>
