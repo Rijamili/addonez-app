@@ -122,13 +122,19 @@ console.log("Database:", odooConfig.db);
   // undefined (no error, just missing data), which meant the JWT's
   // "email" field was always undefined and per-user Odoo group
   // permission checks had nothing to check against.
-  const users = await this.searchRead(
-    "res.users",
-    [["login", "=", email]],
-    ["id", "name", "login", "partner_id", "groups_id", "company_id", "company_ids"],
-    1
-  );
-
+ const users = await this.searchRead(
+  "res.users",
+  [["login", "=", email]],
+  [
+    "id",
+    "name",
+    "login",
+    "partner_id",
+    "company_id",
+    "company_ids",
+  ],
+  1
+);
   return users[0] || null;
 }
   async ping() {
