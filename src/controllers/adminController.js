@@ -107,7 +107,7 @@ const addUser = async (req, res) => {
   const { tenantId } = req.params;
   const { email } = req.body;
 
-  const tenant = TenantDirectory.getById(tenantId);
+  const tenant = TenantDirectory.findById(tenantId);
   if (!tenant) return error(res, `Tenant "${tenantId}" not found.`, 404);
 
   // Best-effort check: does this email already exist as an Odoo user on
@@ -136,7 +136,7 @@ const addUser = async (req, res) => {
 // DELETE /api/admin/tenants/:tenantId/users/:email
 const removeUser = async (req, res) => {
   const { tenantId, email } = req.params;
-  const tenant = TenantDirectory.getById(tenantId);
+  const tenant = TenantDirectory.findById(tenantId);
   if (!tenant) return error(res, `Tenant "${tenantId}" not found.`, 404);
 
   try {
@@ -154,7 +154,7 @@ const updateTenant = async (req, res) => {
   const { tenantId } = req.params;
   const { name, odoo: odooPatch } = req.body;
 
-  const tenant = TenantDirectory.getById(tenantId);
+  const tenant = TenantDirectory.findById(tenantId);
   if (!tenant) return error(res, `Tenant "${tenantId}" not found.`, 404);
 
   // If any Odoo connection field is being changed, test the FULL merged

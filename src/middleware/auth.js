@@ -10,22 +10,16 @@ const authenticate = async (req, res, next) => {
     return error(res, "No token provided.", 401);
   }
 
- try {
-  const token = header.split(" ")[1];
+  try {
+    req.user = await verifyToken(header.split(" ")[1]);
 
-  console.log("Received Token:");
-  console.log(token);
+    console.log("Decoded Token:");
+    console.log(req.user);
 
-  req.user = verifyToken(token);
-
-  console.log("Decoded Token:");
-  console.log(req.user);
-
-} catch (err) {
-  console.error("JWT Verify Error:", err);
-
-  return error(res, "Invalid or expired token.", 401);
-}
+  } catch (err) {
+    console.log(err);
+    return error(res, "Invalid or expired token.", 401);
+  }
 
   // ✅ FIXED LINE
   const tenant = TenantDirectory.findById(req.user.tenantId);
@@ -35,7 +29,11 @@ const authenticate = async (req, res, next) => {
   }
 
   req.tenant = tenant;
-  requestContext.run(tenant, () => next());
+  requestContext.run(
+    tenant,
+    () => next(),
+    { companyIds: req.user.companyIds || null }
+  );
 };
 
 const authorize = (...roles) => (req, res, next) => {

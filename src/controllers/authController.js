@@ -53,10 +53,14 @@ console.log("Groups:", user.groups_id);
         role,
         partnerId: user.partner_id?.[0],
         tenantId: tenant.id,
-        // Odoo's res.groups ids for this user — modulesController uses
-        // this to decide which side-menu items THIS user can see, on
-        // top of which Odoo apps are installed for the tenant overall.
         groupIds: user.groups_id || [],
+        // Odoo's own multi-company access for this specific user — used
+        // to scope every later Odoo query to only the companies they're
+        // actually allowed to see (via allowed_company_ids in context),
+        // even though we still authenticate Odoo calls as the shared
+        // admin account. This is what makes multi-company setups safe.
+        companyId: user.company_id?.[0] || null,
+        companyIds: user.company_ids || [],
       });
 
       return {

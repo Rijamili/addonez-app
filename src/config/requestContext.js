@@ -7,7 +7,10 @@ const { AsyncLocalStorage } = require("async_hooks");
 
 const als = new AsyncLocalStorage();
 
-const run = (tenant, fn) => als.run({ tenant }, fn);
-const getTenant = () => als.getStore()?.tenant || null;
+const run = (tenant, fn, user = null) =>
+  als.run({ tenant, companyIds: user?.companyIds || null }, fn);
 
-module.exports = { run, getTenant };
+const getTenant = () => als.getStore()?.tenant || null;
+const getCompanyIds = () => als.getStore()?.companyIds || null;
+
+module.exports = { run, getTenant, getCompanyIds };

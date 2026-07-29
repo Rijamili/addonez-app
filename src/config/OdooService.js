@@ -80,8 +80,23 @@ console.log("Database:", odooConfig.db);
     const db = odooConfig.db;
     const password = odooConfig.adminPassword || odooConfig.password;
 
+    // We authenticate every Odoo call as the shared admin account (simpler,
+    // fewer credentials to manage) — but that alone would mean every user
+    // sees every company's data, which is wrong for multi-company tenants.
+    // To fix that without switching accounts, we tell Odoo which companies
+    // THIS specific logged-in user is actually allowed to see, via
+    // `allowed_company_ids` in the call's context. Odoo's own record rules
+    // then filter every query as if we'd logged in as that real user.
+    const companyIds = requestContext.getCompanyIds();
+    const finalKwargs = companyIds?.length
+      ? {
+          ...kwargs,
+          context: { ...(kwargs.context || {}), allowed_company_ids: companyIds },
+        }
+      : kwargs;
+
     return new Promise((resolve, reject) => {
-      clients.models.methodCall("execute_kw", [db, uid, password, model, method, args, kwargs], (err, result) => {
+      clients.models.methodCall("execute_kw", [db, uid, password, model, method, args, finalKwargs], (err, result) => {
         if (err) {
           if (err.message?.includes("AccessDenied")) this._adminAuthByTenant.delete(key);
           return reject(new Error(`[${model}.${method}]: ${err.message}`));
@@ -110,7 +125,7 @@ console.log("Database:", odooConfig.db);
   const users = await this.searchRead(
     "res.users",
     [["login", "=", email]],
-    ["id", "name", "login", "partner_id"],
+    ["id", "name", "login", "partner_id", "groups_id", "company_id", "company_ids"],
     1
   );
 
