@@ -23,16 +23,16 @@ const MODULE_REGISTRY = [
   // (module.name_of_group, as seen in Odoo's own security/*.xml files).
   // Resolved to a real numeric group id once per tenant (cached), then
   // checked against the logged-in user's own groupIds from their JWT.
-  { key: "sales", name: "Sales", icon: "shopping-cart", odooModule: "sale", groupXmlId: "sales_team.group_sale_salesman" },
-  { key: "projects", name: "Projects", icon: "folder", odooModule: "project", groupXmlId: "project.group_project_user" },
+  { key: "sales", name: "Sales", icon: "shopping-cart", odooModule: "sale", groupXmlId: ["sales_team.group_sale_salesman", "sales_team.group_sale_salesman_all_leads", "sales_team.group_sale_manager"] },
+  { key: "projects", name: "Projects", icon: "folder", odooModule: "project", groupXmlId: ["project.group_project_user", "project.group_project_manager"] },
 
   // "Finance" is the parent screen for accounting reports. It's driven by
   // the "account" app specifically (not crm/mrp) — crm/manufacturing are
   // separate entries below, even though today's UI nests their screens
   // inside the Finance stack for navigation purposes.
-  { key: "finance", name: "Finance", icon: "dollar-sign", odooModule: "account", groupXmlId: "account.group_account_invoice" },
-  { key: "crm", name: "CRM", icon: "users", odooModule: "crm", groupXmlId: "sales_team.group_sale_salesman" },
-  { key: "manufacturing", name: "Manufacturing", icon: "settings", odooModule: "mrp", groupXmlId: "mrp.group_mrp_user" },
+  { key: "finance", name: "Finance", icon: "dollar-sign", odooModule: "account", groupXmlId: ["account.group_account_invoice", "account.group_account_manager"] },
+  { key: "crm", name: "CRM", icon: "users", odooModule: "crm", groupXmlId: ["sales_team.group_sale_salesman", "sales_team.group_sale_manager"] },
+  { key: "manufacturing", name: "Manufacturing", icon: "settings", odooModule: "mrp", groupXmlId: ["mrp.group_mrp_user", "mrp.group_mrp_manager"] },
 
   // Cross-module features: only meaningful once there's sales or
   // financial data to analyze, so gated on either being present rather

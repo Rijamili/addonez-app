@@ -93,18 +93,26 @@ function invalidateGroupIdCache(tenantId) {
 // membership, from their JWT's groupIds) is actually permitted to use a
 // given module — not just "is it installed for the tenant overall".
 //
-// If a module has no groupXmlId configured (e.g. cross-module features
-// like Analytics), or the group can't be resolved for some reason, this
-// fails OPEN (allows access) rather than hiding a screen incorrectly —
-// same philosophy as before, just now actually enforcing real checks
-// where we have enough information to do so safely.
+// groupXmlId can be a single string, or an array of acceptable groups —
+// e.g. a Sales Administrator/Manager should also pass a "salesman" check,
+// since Odoo's higher-level groups don't always get automatically
+// expanded into every lower-level group id when read via raw XML-RPC.
+//
+// If a module has no groupXmlId configured, or none of the groups can be
+// resolved, this fails OPEN (allows access) rather than hiding a screen
+// incorrectly.
 async function isModuleAccessibleToUser(tenantId, groupXmlId, userGroupIds = []) {
   if (!groupXmlId) return true;
 
-  const requiredGroupId = await resolveGroupId(tenantId, groupXmlId);
-  if (requiredGroupId == null) return true; // couldn't verify — fail open
+  const candidates = Array.isArray(groupXmlId) ? groupXmlId : [groupXmlId];
+  const resolvedIds = await Promise.all(
+    candidates.map((xmlId) => resolveGroupId(tenantId, xmlId))
+  );
+  const validIds = resolvedIds.filter((id) => id != null);
 
-  return userGroupIds.includes(requiredGroupId);
+  if (validIds.length === 0) return true; // couldn't verify any — fail open
+
+  return validIds.some((id) => userGroupIds.includes(id));
 }
 
 // Resolves visibility for every entry in MODULE_REGISTRY at once, given
