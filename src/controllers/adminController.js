@@ -187,4 +187,24 @@ const listTenants = async (req, res) => {
   return success(res, TenantDirectory.list());
 };
 
-module.exports = { createTenant, updateTenant, addUser, removeUser, listTenants };
+// TEMPORARY diagnostic — GET /api/admin/debug/user-fields
+// Queries Odoo's own metadata to find every field on res.users whose
+// technical name contains "group", so we can find whatever "groups_id"
+// got renamed to in this Odoo version (confirmed: it's not "groups_id"
+// on this install — raises KeyError/Invalid field). Remove this route
+// once OdooService.getUserByEmail() is updated with the real name.
+const debugUserFields = async (req, res) => {
+  try {
+    const fields = await odoo.searchRead(
+      "ir.model.fields",
+      [["model", "=", "res.users"], ["name", "like", "group"]],
+      ["name", "field_description", "ttype", "relation"],
+      50
+    );
+    return success(res, fields);
+  } catch (err) {
+    return error(res, "Failed to look up fields: " + err.message, 500);
+  }
+};
+
+module.exports = { createTenant, updateTenant, addUser, removeUser, listTenants, debugUserFields };

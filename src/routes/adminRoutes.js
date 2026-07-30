@@ -2,7 +2,7 @@
 const express  = require("express");
 const router   = express.Router();
 const { body, param } = require("express-validator");
-const { createTenant, updateTenant, addUser, removeUser, listTenants } = require("../controllers/adminController");
+const { createTenant, updateTenant, addUser, removeUser, listTenants, debugUserFields } = require("../controllers/adminController");
 const { authenticate, authorize } = require("../middleware/auth");
 const { validate } = require("../middleware/validate");
 
@@ -55,5 +55,11 @@ router.delete("/tenants/:tenantId/users/:email",
   [param("tenantId").notEmpty(), param("email").isEmail(), validate],
   removeUser
 );
+
+// TEMPORARY — remove once we've confirmed the real field name for this
+// Odoo version and updated OdooService.getUserByEmail() accordingly.
+// Lists every field on res.users whose technical name contains "group",
+// so we can find whatever "groups_id" got renamed to in Odoo 19.
+router.get("/debug/user-fields", debugUserFields);
 
 module.exports = router;
