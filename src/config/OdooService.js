@@ -130,6 +130,7 @@ console.log("Database:", odooConfig.db);
     "name",
     "login",
     "partner_id",
+    "groups_id",
     "company_id",
     "company_ids",
   ],
