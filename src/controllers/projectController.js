@@ -52,6 +52,7 @@ exports.getTaskAnalysis = async (req, res) => {
         projectId, totalTasks: 0,
         byStage: [], byPriority: [],
         overdueCount: 0, completedCount: 0, completionPercent: 0,
+        timesheet: { totalHours: 0, byEmployee: [], byTask: [] },
       });
     }
 
@@ -104,6 +105,51 @@ exports.getTaskAnalysis = async (req, res) => {
 
     const completionPercent = Math.round((completedCount / totalTasks) * 100);
 
+    // Timesheets — Odoo stores these as account.analytic.line rows linked
+    // to the project (and optionally a specific task). "unit_amount" is
+    // Odoo's field for the logged hours on each entry. If the tenant
+    // doesn't have the Timesheets app installed, project_id simply won't
+    // exist as a filterable field here and this search will come back
+    // empty rather than error — handled below either way.
+    let timesheet = { totalHours: 0, byEmployee: [], byTask: [] };
+    try {
+      const entries = await odoo.searchRead(
+        "account.analytic.line",
+        [["project_id", "=", projectId]],
+        ["employee_id", "task_id", "unit_amount", "date"],
+        5000
+      );
+
+      const hoursByEmployee = {};
+      const hoursByTask = {};
+      let totalHours = 0;
+
+      entries.forEach((e) => {
+        const hours = e.unit_amount || 0;
+        totalHours += hours;
+
+        const employeeName = e.employee_id?.[1] || "Unassigned";
+        hoursByEmployee[employeeName] = (hoursByEmployee[employeeName] || 0) + hours;
+
+        const taskName = e.task_id?.[1] || "No task";
+        hoursByTask[taskName] = (hoursByTask[taskName] || 0) + hours;
+      });
+
+      timesheet = {
+        totalHours: Math.round(totalHours * 100) / 100,
+        byEmployee: Object.entries(hoursByEmployee)
+          .map(([name, hours]) => ({ name, hours: Math.round(hours * 100) / 100 }))
+          .sort((a, b) => b.hours - a.hours),
+        byTask: Object.entries(hoursByTask)
+          .map(([name, hours]) => ({ name, hours: Math.round(hours * 100) / 100 }))
+          .sort((a, b) => b.hours - a.hours),
+      };
+    } catch (tsErr) {
+      // Timesheets app likely isn't installed for this tenant — that's
+      // fine, task analysis itself still works without it.
+      console.log("Timesheet fetch skipped/failed:", tsErr.message);
+    }
+
     return success(res, {
       projectId,
       totalTasks,
@@ -112,6 +158,7 @@ exports.getTaskAnalysis = async (req, res) => {
       overdueCount,
       completedCount,
       completionPercent,
+      timesheet,
     });
   } catch (err) {
     console.error("getTaskAnalysis failed:", err);
