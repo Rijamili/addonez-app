@@ -130,7 +130,11 @@ console.log("Database:", odooConfig.db);
     "name",
     "login",
     "partner_id",
-    "groups_id",
+    // "groups_id" removed TEMPORARILY — this Odoo version (odoo19)
+    // doesn't have a field by this name on res.users at all (raises
+    // KeyError/Invalid field, which was crashing login entirely).
+    // See /api/admin/debug/user-fields for the real field name, then
+    // add it back here once confirmed.
     "company_id",
     "company_ids",
   ],
