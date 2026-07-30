@@ -89,30 +89,26 @@ function invalidateGroupIdCache(tenantId) {
   _groupIdCache.delete(tenantId);
 }
 
-// Checks whether THIS specific logged-in user (via their own Odoo group
-// membership, from their JWT's groupIds) is actually permitted to use a
-// given module — not just "is it installed for the tenant overall".
-//
-// groupXmlId can be a single string, or an array of acceptable groups —
-// e.g. a Sales Administrator/Manager should also pass a "salesman" check,
-// since Odoo's higher-level groups don't always get automatically
-// expanded into every lower-level group id when read via raw XML-RPC.
-//
-// If a module has no groupXmlId configured, or none of the groups can be
-// resolved, this fails OPEN (allows access) rather than hiding a screen
-// incorrectly.
+// TEMPORARILY disabled — groupIds is currently always empty (we had to
+// remove the "groups_id" field from OdooService.getUserByEmail() since
+// this Odoo version doesn't have a field by that name, which was
+// crashing login entirely). Failing closed on every check right now
+// would hide Sales/Projects/etc. for ALL users, which is worse than not
+// enforcing this yet. Re-enable the real check below once we've found
+// the correct field name for this Odoo version and groupIds is
+// populated correctly again.
 async function isModuleAccessibleToUser(tenantId, groupXmlId, userGroupIds = []) {
-  if (!groupXmlId) return true;
+  return true;
 
-  const candidates = Array.isArray(groupXmlId) ? groupXmlId : [groupXmlId];
-  const resolvedIds = await Promise.all(
-    candidates.map((xmlId) => resolveGroupId(tenantId, xmlId))
-  );
-  const validIds = resolvedIds.filter((id) => id != null);
-
-  if (validIds.length === 0) return true; // couldn't verify any — fail open
-
-  return validIds.some((id) => userGroupIds.includes(id));
+  // --- real implementation, re-enable once groupIds works again ---
+  // if (!groupXmlId) return true;
+  // const candidates = Array.isArray(groupXmlId) ? groupXmlId : [groupXmlId];
+  // const resolvedIds = await Promise.all(
+  //   candidates.map((xmlId) => resolveGroupId(tenantId, xmlId))
+  // );
+  // const validIds = resolvedIds.filter((id) => id != null);
+  // if (validIds.length === 0) return true;
+  // return validIds.some((id) => userGroupIds.includes(id));
 }
 
 // Resolves visibility for every entry in MODULE_REGISTRY at once, given
