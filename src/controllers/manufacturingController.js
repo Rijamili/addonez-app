@@ -1,6 +1,7 @@
 const odoo = require("../config/OdooService");
 const { success, error } = require("../utils/response");
 const requestContext = require("../config/requestContext");
+const { getInstalledModules } = require("../config/moduleAccessService");
 
 // Odoo 17+ (this tenant runs Odoo 19) split product.product's "type"
 // field: storable products used to be type="product", but that value
@@ -29,6 +30,20 @@ async function storableProductDomain() {
   }
 }
 
+// Wraps any product.product read so a field/version mismatch on THIS
+// specific Odoo instance degrades to "no product data available" rather
+// than 500ing the whole Manufacturing screen — same philosophy as
+// getQualityScore/getMaintenance/getWorkforce below: if Odoo can't give
+// us this data cleanly, don't show broken/guessed data, just omit it.
+async function safeProductRead(domain, fields, limit) {
+  try {
+    return await odoo.searchRead("product.product", domain, fields, limit);
+  } catch (e) {
+    console.warn("Manufacturing: product.product query failed, omitting product data:", e.message);
+    return null; // null (not []) so callers can tell "unavailable" apart from "no products"
+  }
+}
+
 // Shared helper: returns the real pass rate from quality.check, or null
 // if the Quality app isn't installed / has no checks logged yet.
 async function getQualityScore() {
@@ -40,6 +55,27 @@ async function getQualityScore() {
   } catch (e) {
     return null;
   }
+}
+
+// Maps each optional Manufacturing sub-screen to the Odoo technical
+// module name it actually depends on. Screens NOT listed here
+// (production, work-orders, inventory, cost, ai-predictive,
+// executive-dashboard) only need "mrp"/"product" — already guaranteed
+// by requireModule("manufacturing") gating this whole controller — so
+// they're always included.
+const SUBSCREEN_REQUIRES = {
+  quality: "quality",
+  procurement: "purchase",
+  maintenance: "maintenance",
+  workforce: "hr",
+};
+
+async function visibleReportGroups(tenantId, allGroups) {
+  const installed = await getInstalledModules(tenantId);
+  return allGroups.filter((g) => {
+    const requiredModule = SUBSCREEN_REQUIRES[g.key];
+    return !requiredModule || installed.has(requiredModule);
+  });
 }
 
 // GET /api/manufacturing
@@ -67,6 +103,19 @@ exports.getManufacturingSummary = async (req, res) => {
     const doneOrders   = allOrders.filter((o) => o.state === "done").length;
     const machineUtilization = Math.round((doneOrders / totalOrders) * 100);
 
+    const allReportGroups = [
+      { key: "production",    label: "Production" },
+      { key: "work-orders",   label: "Work orders" },
+      { key: "inventory",     label: "Inventory and material" },
+      { key: "quality",       label: "Quality" },
+      { key: "procurement",   label: "Procurement" },
+      { key: "maintenance",   label: "Maintenance" },
+      { key: "workforce",     label: "Workforce" },
+      { key: "cost",          label: "Cost and profitability" },
+      { key: "ai-predictive", label: "AI predictive" },
+      { key: "executive-dashboard", label: "Executive dashboard" },
+    ];
+
     return success(res, {
       kpis: {
         todaysProduction: unitsToday,
@@ -74,18 +123,7 @@ exports.getManufacturingSummary = async (req, res) => {
         machineUtilization,
         qualityScore,
       },
-      reportGroups: [
-        { key: "production",    label: "Production" },
-        { key: "work-orders",   label: "Work orders" },
-        { key: "inventory",     label: "Inventory and material" },
-        { key: "quality",       label: "Quality" },
-        { key: "procurement",   label: "Procurement" },
-        { key: "maintenance",   label: "Maintenance" },
-        { key: "workforce",     label: "Workforce" },
-        { key: "cost",          label: "Cost and profitability" },
-        { key: "ai-predictive", label: "AI predictive" },
-        { key: "executive-dashboard", label: "Executive dashboard" },
-      ],
+      reportGroups: await visibleReportGroups(req.tenant?.id, allReportGroups),
     });
   } catch (err) {
     return error(res, err.message);
@@ -139,18 +177,22 @@ exports.getWorkOrders = async (req, res) => {
 // GET /api/manufacturing/inventory
 exports.getInventory = async (req, res) => {
   try {
-    const products = await odoo.searchRead(
-      "product.product",
+    const products = await safeProductRead(
       await storableProductDomain(),
       ["name", "qty_available", "virtual_available", "reordering_min_qty"],
       300
     );
+
+    if (products === null) {
+      return success(res, { installed: false, lowStock: [], allProducts: [] });
+    }
 
     const lowStock = products.filter(
       (p) => p.reordering_min_qty > 0 && Number(p.qty_available) < Number(p.reordering_min_qty)
     );
 
     return success(res, {
+      installed: true,
       lowStock: lowStock.map((p) => ({
         name:       p.name,
         onHand:     Number(p.qty_available || 0),
@@ -168,68 +210,23 @@ exports.getInventory = async (req, res) => {
 };
 
 // GET /api/manufacturing/quality
-// exports.getQuality = async (req, res) => {
-//   try {
-//     let checks = [];
-//     try {
-//       checks = await odoo.searchRead(
-//         "quality.check",
-//         [],
-//         ["name", "quality_state", "product_id", "control_date"],
-//         200
-//       );
-//     } catch (e) {
-//       return success(res, { installed: false, passed: 0, failed: 0, checks: [] });
-//     }
-
-//     const passed = checks.filter((c) => c.quality_state === "pass").length;
-//     const failed = checks.filter((c) => c.quality_state === "fail").length;
-
-//     return success(res, {
-//       installed: true,
-//       passed,
-//       failed,
-//       checks: checks.map((c) => ({
-//         name:    c.name,
-//         product: c.product_id?.[1] || "",
-//         state:   c.quality_state,
-//         date:    c.control_date,
-//       })),
-//     });
-//   } catch (err) {
-//     return error(res, err.message);
-//   }
-// };
 exports.getQuality = async (req, res) => {
+  let checks;
   try {
-    let checks = [];
-    try {
-      checks = await odoo.searchRead(
-        "quality.check",
-        [],
-        ["name", "quality_state", "product_id", "control_date"],
-        200
-      );
-    } catch (e) {
-      checks = [];
-    }
+    checks = await odoo.searchRead(
+      "quality.check",
+      [],
+      ["name", "quality_state", "product_id", "control_date"],
+      200
+    );
+  } catch (err) {
+    // The Quality app genuinely isn't installed on this tenant's Odoo —
+    // say so honestly rather than showing fabricated demo numbers that
+    // look like real data.
+    return success(res, { installed: false, passed: 0, failed: 0, checks: [] });
+  }
 
-    if (checks.length === 0) {
-      // DEMO DATA — Quality app isn't installed/has no checks yet.
-      // Remove this block once real quality checks exist in Odoo.
-      return success(res, {
-        installed: true,
-        passed: 42,
-        failed: 3,
-        checks: [
-          { name: "QC/001", product: "Nandini Milk 1L",  state: "pass", date: "2026-06-28" },
-          { name: "QC/002", product: "Thara Coffee 250g", state: "pass", date: "2026-06-27" },
-          { name: "QC/003", product: "ERP Packaging Kit", state: "fail", date: "2026-06-25" },
-          { name: "QC/004", product: "Nandini Milk 1L",  state: "pass", date: "2026-06-24" },
-        ],
-      });
-    }
-
+  try {
     const passed = checks.filter((c) => c.quality_state === "pass").length;
     const failed = checks.filter((c) => c.quality_state === "fail").length;
 
@@ -271,142 +268,56 @@ exports.getProcurement = async (req, res) => {
 };
 
 // GET /api/manufacturing/maintenance
-// exports.getMaintenance = async (req, res) => {
-//   try {
-//     let requests = [];
-//     try {
-//       requests = await odoo.searchRead(
-//         "maintenance.request",
-//         [],
-//         ["name", "equipment_id", "stage_id", "request_date", "schedule_date"],
-//         200
-//       );
-//     } catch (e) {
-//       return success(res, { installed: false, items: [] });
-//     }
-
-//     return success(res, {
-//       installed: true,
-//       items: requests.map((r) => ({
-//         name:        r.name,
-//         equipment:   r.equipment_id?.[1] || "",
-//         stage:       r.stage_id?.[1] || "",
-//         requestedAt: r.request_date,
-//         scheduledAt: r.schedule_date,
-//       })),
-//     });
-//   } catch (err) {
-//     return error(res, err.message);
-//   }
-// };
 exports.getMaintenance = async (req, res) => {
+  let requests;
   try {
-    let requests = [];
-    try {
-      requests = await odoo.searchRead(
-        "maintenance.request",
-        [],
-        ["name", "equipment_id", "stage_id", "request_date", "schedule_date"],
-        200
-      );
-    } catch (e) {
-      requests = [];
-    }
-
-    if (requests.length === 0) {
-      // DEMO DATA — Maintenance app isn't installed/has no requests yet.
-      // Remove this block once real maintenance requests exist in Odoo.
-      return success(res, {
-        installed: true,
-        items: [
-          { name: "MR/001", equipment: "Filling Machine A",  stage: "In progress", requestedAt: "2026-06-26", scheduledAt: "2026-07-02" },
-          { name: "MR/002", equipment: "Conveyor Belt 2",    stage: "Scheduled",   requestedAt: "2026-06-29", scheduledAt: "2026-07-05" },
-          { name: "MR/003", equipment: "Packaging Sealer",   stage: "Completed",   requestedAt: "2026-06-18", scheduledAt: "2026-06-20" },
-        ],
-      });
-    }
-
-    return success(res, {
-      installed: true,
-      items: requests.map((r) => ({
-        name:        r.name,
-        equipment:   r.equipment_id?.[1] || "",
-        stage:       r.stage_id?.[1] || "",
-        requestedAt: r.request_date,
-        scheduledAt: r.schedule_date,
-      })),
-    });
+    requests = await odoo.searchRead(
+      "maintenance.request",
+      [],
+      ["name", "equipment_id", "stage_id", "request_date", "schedule_date"],
+      200
+    );
   } catch (err) {
-    return error(res, err.message);
+    // Maintenance app genuinely isn't installed on this tenant's Odoo.
+    return success(res, { installed: false, items: [] });
   }
+
+  return success(res, {
+    installed: true,
+    items: requests.map((r) => ({
+      name:        r.name,
+      equipment:   r.equipment_id?.[1] || "",
+      stage:       r.stage_id?.[1] || "",
+      requestedAt: r.request_date,
+      scheduledAt: r.schedule_date,
+    })),
+  });
 };
 
 // GET /api/manufacturing/workforce
-// exports.getWorkforce = async (req, res) => {
-//   try {
-//     let employees = [];
-//     try {
-//       employees = await odoo.searchRead(
-//         "hr.employee",
-//         [["department_id.name", "ilike", "manufactur"]],
-//         ["name", "job_title", "department_id"],
-//         100
-//       );
-//     } catch (e) {
-//       return success(res, { installed: false, employees: [] });
-//     }
-
-//     return success(res, {
-//       installed: true,
-//       employees: employees.map((e) => ({
-//         name:       e.name,
-//         jobTitle:   e.job_title || "",
-//         department: e.department_id?.[1] || "",
-//       })),
-//     });
-//   } catch (err) {
-//     return error(res, err.message);
-//   }
-// };
 exports.getWorkforce = async (req, res) => {
+  let employees;
   try {
-    let employees = [];
-    try {
-      employees = await odoo.searchRead(
-        "hr.employee",
-        [["department_id.name", "ilike", "manufactur"]],
-        ["name", "job_title", "department_id"],
-        100
-      );
-    } catch (e) {
-      employees = [];
-    }
-
-    if (employees.length === 0) {
-      // DEMO DATA — no HR employees tagged to a manufacturing department yet.
-      // Remove this block once real employee records exist in Odoo.
-      return success(res, {
-        installed: true,
-        employees: [
-          { name: "Arun Kumar",   jobTitle: "Production Supervisor", department: "Manufacturing" },
-          { name: "Priya Singh",  jobTitle: "Machine Operator",      department: "Manufacturing" },
-          { name: "Ravi Shankar", jobTitle: "Quality Inspector",     department: "Manufacturing" },
-          { name: "Meena Joshi",  jobTitle: "Packaging Lead",        department: "Manufacturing" },
-        ],
-      });
-    }
-
-    return success(res, {
-      installed: true,
-      employees: employees.map((e) => ({
-        name:       e.name,
-        jobTitle:   e.job_title || "",
-        department: e.department_id?.[1] || "",
-      })),
-    });
+    employees = await odoo.searchRead(
+      "hr.employee",
+      [["department_id.name", "ilike", "manufactur"]],
+      ["name", "job_title", "department_id"],
+      100
+    );
   } catch (err) {
-    return error(res, err.message);
+    // hr module isn't installed on this tenant's Odoo — say so honestly
+    // rather than showing fabricated demo employees.
+    return success(res, { installed: false, employees: [] });
   }
+
+  return success(res, {
+    installed: true,
+    employees: employees.map((e) => ({
+      name:       e.name,
+      jobTitle:   e.job_title || "",
+      department: e.department_id?.[1] || "",
+    })),
+  });
 };
 
 // GET /api/manufacturing/cost
@@ -471,13 +382,12 @@ exports.getAiPredictive = async (req, res) => {
         progress: o.product_qty > 0 ? Math.round((o.qty_produced / o.product_qty) * 100) : 0,
       }));
 
-    const products = await odoo.searchRead(
-      "product.product",
+    const products = await safeProductRead(
       await storableProductDomain(),
       ["name", "qty_available", "virtual_available"],
       300
     );
-    const stockOutRisk = products
+    const stockOutRisk = (products || [])
       .filter((p) => Number(p.virtual_available) <= 0 && Number(p.qty_available) >= 0)
       .slice(0, 10)
       .map((p) => ({ name: p.name, onHand: Number(p.qty_available || 0) }));
@@ -507,8 +417,7 @@ exports.getExecutiveDashboard = async (req, res) => {
         ["id"], 500
       ),
       odoo.searchRead("mrp.production", [], ["state"], 2000),
-      odoo.searchRead(
-        "product.product",
+      safeProductRead(
         productDomain,
         ["name", "qty_available", "reordering_min_qty"],
         300
@@ -521,7 +430,7 @@ exports.getExecutiveDashboard = async (req, res) => {
     const doneOrders   = allOrders.filter((o) => o.state === "done").length;
     const utilization = Math.round((doneOrders / totalOrders) * 100);
 
-    const lowStock = lowStockProducts.filter(
+    const lowStock = (lowStockProducts || []).filter(
       (p) => Number(p.qty_available) < Number(p.reordering_min_qty)
     );
 
