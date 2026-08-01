@@ -16,6 +16,8 @@ const TenantDirectory = require("./config/TenantDirectory");
 const Tenant = require("./models/Tenant");
 
 require("./models/TenantUser");
+require("./models/AttendanceRecord");
+require("./models/AttendanceSettings");
 
 const app = express();
 app.set("trust proxy", 1);
@@ -41,6 +43,7 @@ app.use("/api/accounts",      require("./routes/accountsRoutes"));
 app.use("/api/crm",           require("./routes/crmRoutes"));
 app.use("/api/manufacturing", require("./routes/manufacturingRoutes"));
 
+app.use("/api/attendance", require("./routes/attendanceRoutes"));
 app.use("/api/projects",  require("./routes/projectRoutes"));
 app.use("/api/profile",   require("./routes/profileRoutes"));
 app.use("/api/analytics", require("./routes/analyticsRoutes"));

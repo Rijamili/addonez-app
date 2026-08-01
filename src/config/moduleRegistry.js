@@ -34,6 +34,12 @@ const MODULE_REGISTRY = [
   { key: "crm", name: "CRM", icon: "users", odooModule: "crm", groupXmlId: ["sales_team.group_sale_salesman", "sales_team.group_sale_manager"] },
   { key: "manufacturing", name: "Manufacturing", icon: "settings", odooModule: "mrp", groupXmlId: ["mrp.group_mrp_user", "mrp.group_mrp_manager"] },
 
+  // No groupXmlId — visibility for Admin/Company/Employee is enforced by
+  // attendanceRole (see middleware/attendanceAccess.js), not by an Odoo
+  // group, since every logged-in user should see SOME attendance screen
+  // (their own, at minimum) once the app is installed.
+  { key: "attendance", name: "Attendance", icon: "clock", odooModule: "hr_attendance" },
+
   // Cross-module features: only meaningful once there's sales or
   // financial data to analyze, so gated on either being present rather
   // than tied to one specific Odoo app. No groupXmlId — access here just

@@ -1,4 +1,5 @@
 const odoo = require("../config/OdooService");
+const attendanceService = require("../services/attendanceService");
 const OdooConfigService = require("../config/OdooConfigService");
 const TenantDirectory = require("../config/TenantDirectory");
 const requestContext = require("../config/requestContext");
@@ -45,6 +46,44 @@ if (user.login.toLowerCase() === "info@addonez.com") {
 console.log("Role:", role);
 console.log("Groups:", user.groups_id);
 
+      // --- Attendance module role resolution ---
+      // Attendance has its own 3-tier model (admin/company/employee) on
+      // top of the app's normal role. We don't rely on res.users.groups_id
+      // here (that field is currently broken on this Odoo version — see
+      // OdooService.getUserByEmail) — has_group() is a model METHOD call,
+      // not a field read, so it works regardless. Falls back to
+      // "does this account have a linked hr.employee record" if the
+      // Attendance app (hr_attendance) isn't installed for this tenant.
+      let attendanceRole = "employee";
+      let employeeId = null;
+      let employeeCompanyId = null;
+
+      try {
+        const employee = await attendanceService.getEmployeeByUserId(user.id);
+        employeeId = employee?.id || null;
+        employeeCompanyId = employee?.company_id?.[0] || null;
+      } catch (e) {
+        // hr module not installed for this tenant, or lookup failed —
+        // fine, just means this login has no linked employee record.
+      }
+
+      if (role === "super_admin") {
+        attendanceRole = "admin";
+      } else {
+        try {
+          const isManager = await odoo.execute("res.users", "has_group", [
+            [user.id],
+            "hr_attendance.group_hr_attendance_manager",
+          ]);
+          attendanceRole = isManager ? "company" : "employee";
+        } catch (e) {
+          // has_group unavailable (module not installed, or method
+          // missing on this Odoo version) — fall back to "does this
+          // account have its own employee record".
+          attendanceRole = employeeId ? "employee" : "company";
+        }
+      }
+
       const token = await generateToken({
         uid,
         odooUserId: user.id,
@@ -61,6 +100,10 @@ console.log("Groups:", user.groups_id);
         // admin account. This is what makes multi-company setups safe.
         companyId: user.company_id?.[0] || null,
         companyIds: user.company_ids || [],
+        // Attendance module fields — see resolution above.
+        attendanceRole,
+        employeeId,
+        employeeCompanyId,
       });
 
       return {
@@ -70,6 +113,8 @@ console.log("Groups:", user.groups_id);
           name: user.name,
           email: user.login,
           role,
+          attendanceRole,
+          employeeId,
         },
       };
     });

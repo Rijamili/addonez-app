@@ -29,10 +29,11 @@ const authenticate = async (req, res, next) => {
   }
 
   req.tenant = tenant;
+  const isSuperAdmin = req.user.role === "super_admin";
   requestContext.run(
     tenant,
     () => next(),
-    { companyIds: req.user.companyIds || null }
+    { companyIds: isSuperAdmin ? null : (req.user.companyIds || null) }
   );
 };
 
