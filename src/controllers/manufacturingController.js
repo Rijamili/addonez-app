@@ -1,5 +1,33 @@
 const odoo = require("../config/OdooService");
 const { success, error } = require("../utils/response");
+const requestContext = require("../config/requestContext");
+
+// Odoo 17+ (this tenant runs Odoo 19) split product.product's "type"
+// field: storable products used to be type="product", but that value
+// was removed — storable is now tracked via the boolean "is_storable"
+// field instead (type is now just 'consu'/'service'/'combo'). Passing
+// the old value raises an XML-RPC fault ("invalid selection value")
+// rather than failing gracefully, which is what was showing up as
+// "[product.product.search_read]: XML-RPC fault" on Manufacturing
+// screens. Detected once per tenant (Odoo version is a per-tenant
+// fact) and cached, with a fallback to the legacy value for any tenant
+// still on an older Odoo where is_storable doesn't exist at all.
+const _storableStyleByTenant = new Map();
+
+async function storableProductDomain() {
+  const tenantId = requestContext.getTenant()?.id || "default";
+  const cached = _storableStyleByTenant.get(tenantId);
+  if (cached) return cached === "is_storable" ? [["is_storable", "=", true]] : [["type", "=", "product"]];
+
+  try {
+    await odoo.searchCount("product.product", [["is_storable", "=", true]]);
+    _storableStyleByTenant.set(tenantId, "is_storable");
+    return [["is_storable", "=", true]];
+  } catch (e) {
+    _storableStyleByTenant.set(tenantId, "legacy_type");
+    return [["type", "=", "product"]];
+  }
+}
 
 // Shared helper: returns the real pass rate from quality.check, or null
 // if the Quality app isn't installed / has no checks logged yet.
@@ -113,7 +141,7 @@ exports.getInventory = async (req, res) => {
   try {
     const products = await odoo.searchRead(
       "product.product",
-      [["type", "=", "product"]],
+      await storableProductDomain(),
       ["name", "qty_available", "virtual_available", "reordering_min_qty"],
       300
     );
@@ -445,7 +473,7 @@ exports.getAiPredictive = async (req, res) => {
 
     const products = await odoo.searchRead(
       "product.product",
-      [["type", "=", "product"]],
+      await storableProductDomain(),
       ["name", "qty_available", "virtual_available"],
       300
     );
@@ -464,6 +492,7 @@ exports.getAiPredictive = async (req, res) => {
 exports.getExecutiveDashboard = async (req, res) => {
   try {
     const today = new Date().toISOString().slice(0, 10);
+    const productDomain = [...(await storableProductDomain()), ["reordering_min_qty", ">", 0]];
 
     const [doneToday, inProgress, delayed, allOrders, lowStockProducts, qualityScore] = await Promise.all([
       odoo.searchRead(
@@ -480,7 +509,7 @@ exports.getExecutiveDashboard = async (req, res) => {
       odoo.searchRead("mrp.production", [], ["state"], 2000),
       odoo.searchRead(
         "product.product",
-        [["type", "=", "product"], ["reordering_min_qty", ">", 0]],
+        productDomain,
         ["name", "qty_available", "reordering_min_qty"],
         300
       ),
