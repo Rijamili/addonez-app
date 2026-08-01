@@ -207,4 +207,41 @@ const debugUserFields = async (req, res) => {
   }
 };
 
-module.exports = { createTenant, updateTenant, addUser, removeUser, listTenants, debugUserFields };
+// TEMPORARY diagnostic — GET /api/admin/debug/product-fields
+// Confirms, against REAL Odoo metadata rather than a guess, whether this
+// instance still uses the legacy `type='product'` selection value or
+// the Odoo 17+ `is_storable` boolean split — so manufacturingController's
+// storable-product filter (see storableProductDomain()) can be verified
+// instead of assumed. Remove once confirmed and no longer needed.
+const debugProductFields = async (req, res) => {
+  const result = { fieldMetadata: null, typeProbe: null, isStorableProbe: null };
+
+  try {
+    result.fieldMetadata = await odoo.searchRead(
+      "ir.model.fields",
+      [["model", "=", "product.product"], ["name", "in", ["type", "is_storable", "detailed_type"]]],
+      ["name", "field_description", "ttype", "selection"],
+      10
+    );
+  } catch (err) {
+    result.fieldMetadata = { error: err.message };
+  }
+
+  // Independent probes — each caught separately so one missing field
+  // doesn't hide whether the OTHER one works.
+  try {
+    result.typeProbe = await odoo.searchRead("product.product", [], ["name", "type"], 3);
+  } catch (err) {
+    result.typeProbe = { error: err.message };
+  }
+
+  try {
+    result.isStorableProbe = await odoo.searchRead("product.product", [], ["name", "is_storable"], 3);
+  } catch (err) {
+    result.isStorableProbe = { error: err.message };
+  }
+
+  return success(res, result);
+};
+
+module.exports = { createTenant, updateTenant, addUser, removeUser, listTenants, debugUserFields, debugProductFields };

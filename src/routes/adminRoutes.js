@@ -2,7 +2,7 @@
 const express  = require("express");
 const router   = express.Router();
 const { body, param } = require("express-validator");
-const { createTenant, updateTenant, addUser, removeUser, listTenants, debugUserFields } = require("../controllers/adminController");
+const { createTenant, updateTenant, addUser, removeUser, listTenants, debugUserFields, debugProductFields } = require("../controllers/adminController");
 const { authenticate, authorize } = require("../middleware/auth");
 const { validate } = require("../middleware/validate");
 
@@ -61,5 +61,9 @@ router.delete("/tenants/:tenantId/users/:email",
 // Lists every field on res.users whose technical name contains "group",
 // so we can find whatever "groups_id" got renamed to in Odoo 19.
 router.get("/debug/user-fields", debugUserFields);
+
+// TEMPORARY — remove once the Manufacturing "type=product" XML-RPC
+// fault is confirmed fixed. See debugProductFields for what it checks.
+router.get("/debug/product-fields", debugProductFields);
 
 module.exports = router;
