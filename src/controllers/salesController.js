@@ -1,5 +1,6 @@
 const odoo = require("../config/OdooService");
 const { success, error } = require("../utils/response");
+const { withOwnerFilter } = require("../config/dataScope");
 
 exports.getSales = async (req, res) => {
   const { uid }  = req.user;
@@ -7,7 +8,13 @@ exports.getSales = async (req, res) => {
   const offset   = parseInt(req.query.offset || "0");
   const sortDir  = (req.query.sort || "desc").toLowerCase() === "asc" ? "asc" : "desc";
   try {
-    const domain = [["user_id.id", "=", uid]];
+    // Employees only see orders where they're the salesperson. Company
+    // owners/Admin see every order their Odoo company context allows
+    // (allowed_company_ids, applied automatically in OdooService) —
+    // previously EVERY role was scoped to "user_id.id = uid", which
+    // meant a company owner only ever saw their own personal orders
+    // instead of the whole company's.
+    const domain = withOwnerFilter([], "user_id.id", req);
 
     // The paginated list (for displaying rows) and the true total (across
     // ALL of this user's orders, not just the current page) come from
@@ -38,7 +45,8 @@ exports.getSales = async (req, res) => {
 exports.getMonthlySales = async (req, res) => {
   const { uid } = req.user;
   try {
-    const orders = await odoo.searchRead("sale.order", [], ["date_order", "amount_total"]);
+    const domain = withOwnerFilter([], "user_id.id", req);
+    const orders = await odoo.searchRead("sale.order", domain, ["date_order", "amount_total"]);
     const months = { Jan:0,Feb:0,Mar:0,Apr:0,May:0,Jun:0,Jul:0,Aug:0,Sep:0,Oct:0,Nov:0,Dec:0 };
     orders.forEach((o) => {
       const m = new Date(o.date_order).toLocaleString("en-US", { month: "short" });

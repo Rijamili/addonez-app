@@ -1,12 +1,17 @@
 const odoo = require("../config/OdooService");
 const { success, error } = require("../utils/response");
+const { isOwnDataOnly } = require("../config/dataScope");
 
 exports.getAnalytics = async (req, res) => {
   const { uid } = req.user;
+  const ownScope = isOwnDataOnly(req);
   try {
+    const invoiceDomain = ownScope
+      ? [["move_type", "=", "out_invoice"], ["state", "=", "posted"], ["invoice_user_id", "=", uid]]
+      : [["move_type", "=", "out_invoice"], ["state", "=", "posted"]];
     const invoices = await odoo.searchRead(
       "account.move",
-      [["move_type", "=", "out_invoice"], ["state", "=", "posted"]],
+      invoiceDomain,
       ["amount_total"],
       10000
     );
@@ -24,7 +29,8 @@ exports.getAnalytics = async (req, res) => {
       cancel: "Cancelled",
     };
 
-    const orders = await odoo.searchRead("sale.order", [], ["state"], 10000);
+    const orderDomain = ownScope ? [["user_id.id", "=", uid]] : [];
+    const orders = await odoo.searchRead("sale.order", orderDomain, ["state"], 10000);
     const counts = {};
     orders.forEach((o) => {
       const label = STATUS_LABELS[o.state] || o.state;
@@ -44,10 +50,14 @@ exports.getAnalytics = async (req, res) => {
 
 exports.getPredictions = async (req, res) => {
   const { uid } = req.user;
+  const ownScope = isOwnDataOnly(req);
   try {
+    const domain = ownScope
+      ? [["move_type", "=", "out_invoice"], ["state", "=", "posted"], ["invoice_user_id", "=", uid]]
+      : [["move_type", "=", "out_invoice"], ["state", "=", "posted"]];
     const invoices = await odoo.searchRead(
       "account.move",
-      [["move_type", "=", "out_invoice"], ["state", "=", "posted"], ["invoice_user_id", "=", uid]],
+      domain,
       ["amount_total"],
       50
     );

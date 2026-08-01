@@ -1,5 +1,6 @@
 const odoo = require("../config/OdooService");
 const { success, error } = require("../utils/response");
+const { withOwnerFilter } = require("../config/dataScope");
 
 exports.getCrmSummary = async (req, res) => {
   try {
@@ -35,9 +36,10 @@ exports.getCrmSummary = async (req, res) => {
 // GET /api/crm/leads
 exports.getLeads = async (req, res) => {
   try {
+    const domain = withOwnerFilter([["active", "=", true]], "user_id", req);
     const leads = await odoo.searchRead(
       "crm.lead",
-      [["active", "=", true]],
+      domain,
       ["name", "partner_name", "stage_id", "source_id", "user_id", "create_date", "probability"],
       200
     );
@@ -58,9 +60,10 @@ exports.getLeads = async (req, res) => {
 // GET /api/crm/opportunities
 exports.getOpportunities = async (req, res) => {
   try {
+    const domain = withOwnerFilter([["active", "=", true], ["type", "=", "opportunity"]], "user_id", req);
     const opps = await odoo.searchRead(
       "crm.lead",
-      [["active", "=", true], ["type", "=", "opportunity"]],
+      domain,
       ["name", "partner_name", "stage_id", "expected_revenue", "probability", "date_deadline", "user_id"],
       200
     );
@@ -133,9 +136,10 @@ exports.getCustomers = async (req, res) => {
 // GET /api/crm/activity
 exports.getActivity = async (req, res) => {
   try {
+    const domain = withOwnerFilter([], "user_id", req);
     const activities = await odoo.searchRead(
       "mail.activity",
-      [],
+      domain,
       ["summary", "activity_type_id", "date_deadline", "user_id", "res_name"],
       200
     );

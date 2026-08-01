@@ -1,11 +1,23 @@
 const odoo = require("../config/OdooService");
 const { success, error } = require("../utils/response");
+const { isOwnDataOnly } = require("../config/dataScope");
 
 exports.getProjects = async (req, res) => {
   const { uid } = req.user;
   try {
+    let domain = [];
+    if (isOwnDataOnly(req)) {
+      // Employee tier: projects they manage OR have at least one task
+      // assigned to them in — not just "manager", since most employees
+      // are contributors, not project owners.
+      const myTasks = await odoo.searchRead("project.task", [["user_ids", "in", [uid]]], ["project_id"], 2000);
+      const myProjectIds = [...new Set(myTasks.map((t) => t.project_id?.[0]).filter(Boolean))];
+      domain = myProjectIds.length
+        ? ["|", ["id", "in", myProjectIds], ["user_id.id", "=", uid]]
+        : [["user_id.id", "=", uid]];
+    }
     const projects = await odoo.searchRead(
-      "project.project", [["user_id.id", "=", uid]],
+      "project.project", domain,
       ["name", "date_start", "date", "last_update_status", "task_count"], 20
     );
     return success(res, projects);
@@ -17,8 +29,12 @@ exports.getProjects = async (req, res) => {
 exports.getTasks = async (req, res) => {
   const { uid } = req.user;
   try {
+    // Employee tier only sees tasks assigned to them — previously this
+    // endpoint had NO filter at all, so any logged-in user could see
+    // every task across the whole tenant.
+    const domain = isOwnDataOnly(req) ? [["user_ids", "in", [uid]]] : [];
     const tasks = await odoo.searchRead(
-      "project.task", [],
+      "project.task", domain,
       ["name", "project_id", "stage_id", "date_deadline", "priority"], 50
     );
     return success(res, tasks);
@@ -36,6 +52,17 @@ exports.getTaskAnalysis = async (req, res) => {
     const projectId = parseInt(req.params.id, 10);
     if (!projectId) {
       return error(res, "A valid project id is required", 400);
+    }
+
+    if (isOwnDataOnly(req)) {
+      const { uid } = req.user;
+      const [isManager, hasTask] = await Promise.all([
+        odoo.searchCount("project.project", [["id", "=", projectId], ["user_id.id", "=", uid]]),
+        odoo.searchCount("project.task", [["project_id", "=", projectId], ["user_ids", "in", [uid]]]),
+      ]);
+      if (!isManager && !hasTask) {
+        return error(res, "You don't have access to this project.", 403);
+      }
     }
 
     const tasks = await odoo.searchRead(
