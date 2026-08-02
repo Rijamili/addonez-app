@@ -77,61 +77,6 @@ app.get("/", (req, res) => {
 app.get("/health", (req, res) => {
   res.json({ status: "ok" });
 });
-app.use("*", (req, res) => res.status(404).json({ success: false, message: "Route not found." }));
-app.use(errorHandler);
-
-const start = async () => {
-  try {
-    await sequelize.authenticate();
-    console.log("✅ Database Authentication Successful");
-
-    const [rows] = await sequelize.query(`
-SELECT
-    current_database(),
-    current_user,
-    inet_server_addr(),
-    inet_server_port();
-`);
-
-console.log(rows);
-
-const [tables] = await sequelize.query(`
-SELECT table_name
-FROM information_schema.tables
-WHERE table_schema='public';
-`);
-
-console.log("TABLES:", tables);
-
-const [tenants] = await sequelize.query(`
-SELECT * FROM tenants;
-`);
-
-console.log("TENANTS:", tenants);
-
-    console.log("Connected Database:", rows);
-    const [tenantRows] = await sequelize.query(`
-  SELECT id, tenant_id, company_name
-  FROM tenants;
-`);
-
-console.log("RAW SQL TENANTS:", tenantRows);
-const [serverInfo] = await sequelize.query(`
-  SELECT inet_server_addr(), inet_server_port();
-`);
-
-console.log("SERVER:", serverInfo);
-
-    await sequelize.sync();
-    console.log("✅ Database Synced");
-
-    await TenantDirectory.reload();
-    console.log("✅ Tenant Directory Reloaded");
-
-  } catch (err) {
-    console.error("❌ Database Startup Error");
-    throw err;
-  }
 app.get("/debug/tenants", async (req, res) => {
   const Tenant = require("./models/Tenant");
 
@@ -143,7 +88,33 @@ app.get("/debug/tenants", async (req, res) => {
     rows,
   });
 });
- 
+app.use("*", (req, res) => res.status(404).json({ success: false, message: "Route not found." }));
+app.use(errorHandler);
+
+const start = async () => {
+  try {
+    await sequelize.authenticate();
+    console.log("✅ Database Authentication Successful");
+
+    // sync() creates tables from the models if they don't exist yet —
+    // this MUST run before anything else queries a table directly.
+    // (Previously several debug SELECT queries ran here, before sync(),
+    // which crashed on a genuinely empty/fresh database since "tenants"
+    // didn't exist yet — this only worked before because every prior
+    // environment already had tables from earlier setup. The debug
+    // queries themselves have been removed since they were just leftover
+    // logging clutter, not needed for the app to function.)
+    await sequelize.sync();
+    console.log("✅ Database Synced");
+
+    await TenantDirectory.reload();
+    console.log("✅ Tenant Directory Reloaded");
+
+  } catch (err) {
+    console.error("❌ Database Startup Error");
+    throw err;
+  }
+
   // Load legacy Odoo config
   try {
     await OdooConfigService.loadFromOdoo();
