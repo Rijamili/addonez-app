@@ -151,21 +151,38 @@ const forgotPassword = async (req, res) => {
   const { email } = req.body;
   const tenant = TenantDirectory.findByEmail(email);
 
-  try {
-    if (tenant) {
+  // The response to the CLIENT always stays the same generic message
+  // regardless of what happens below — that's intentional (never reveal
+  // whether an email exists). But previously any failure here (wrong
+  // tenant, no matching Odoo user, action_reset_password erroring out —
+  // most commonly because that tenant's Odoo has no outgoing mail
+  // server configured) was swallowed by a bare `catch {}` with zero
+  // logging, so there was no way to tell from the server side whether
+  // this was silently failing for real users. Logging here doesn't
+  // change what the client sees — it only shows up in server logs.
+  if (!tenant) {
+    console.warn(`forgotPassword: no tenant found for email "${email}"`);
+  } else {
+    try {
       await requestContext.run(tenant, async () => {
         const user = await odoo.getUserByEmail(email);
 
-        if (user) {
-          await odoo.execute(
-            "res.users",
-            "action_reset_password",
-            [[user.id]]
-          );
+        if (!user) {
+          console.warn(`forgotPassword: tenant "${tenant.id}" found, but no Odoo user matches email "${email}"`);
+          return;
         }
+
+        await odoo.execute("res.users", "action_reset_password", [[user.id]]);
+        console.log(`forgotPassword: action_reset_password triggered for user ${user.id} (${email}) on tenant "${tenant.id}"`);
       });
+    } catch (err) {
+      // Most likely cause: that tenant's Odoo instance doesn't have an
+      // outgoing mail server configured, so action_reset_password can't
+      // actually send anything — but any other Odoo-side failure would
+      // also land here.
+      console.error(`forgotPassword: action_reset_password FAILED for email "${email}" on tenant "${tenant.id}":`, err.message);
     }
-  } catch {}
+  }
 
   return success(
     res,
