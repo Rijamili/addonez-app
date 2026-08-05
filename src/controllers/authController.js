@@ -172,7 +172,21 @@ const forgotPassword = async (req, res) => {
           return;
         }
 
-        await odoo.execute("res.users", "action_reset_password", [[user.id]]);
+        await odoo.execute(
+          "res.users",
+          "action_reset_password",
+          [[user.id]],
+          // action_reset_password is built to be clicked as a UI button —
+          // by default it returns an 'ir.actions.client' notification dict
+          // meant for the browser to display, which XML-RPC can't
+          // serialize back to us (that's the exact "XML-RPC fault" seen
+          // in logs). create_user:true is Odoo core's own documented way
+          // to call this programmatically (it's how Odoo's own bulk user
+          // import suppresses the same notification) — it still sends
+          // the actual reset email, it just skips the unserializable
+          // return value.
+          { context: { create_user: true } }
+        );
         console.log(`forgotPassword: action_reset_password triggered for user ${user.id} (${email}) on tenant "${tenant.id}"`);
       });
     } catch (err) {
