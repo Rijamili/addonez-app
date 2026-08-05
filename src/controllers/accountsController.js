@@ -18,10 +18,33 @@ function startDateForPeriod(period) {
   return startDate.toISOString().slice(0, 10);
 }
 
+// Resolves the effective date range for a report request. A custom
+// ?startDate=&endDate= pair always wins over ?period=month|quarter|year
+// when both are present — this is what lets every report screen offer a
+// genuine "choose your own dates" option instead of only the three
+// presets. endDate defaults to today so a preset period always runs
+// through "now", and a custom range with only startDate given behaves
+// the same way.
+function resolveDateRange(req) {
+  const { period, startDate, endDate } = req.query;
+  const usingCustomRange = !!(startDate || endDate);
+  const effectiveStart = startDate || (usingCustomRange ? undefined : startDateForPeriod(period || "month"));
+  const effectiveEnd = endDate || new Date().toISOString().slice(0, 10);
+  return {
+    startDate: effectiveStart,
+    endDate: effectiveEnd,
+    // Echoed back in responses so the screen can label what it's showing
+    // ("This month" vs "Jan 1 - Jan 31") without re-deriving it client-side.
+    period: usingCustomRange ? undefined : (period || "month"),
+  };
+}
+
 // Shared helper: pulls every posted GL line plus the account name/type map.
 // Used by cash balance, balance sheet, and the P&L expense breakdown so we
-// don't repeat the same two queries in every function.
-async function getPostedLedger(startDate) {
+// don't repeat the same two queries in every function. endDate lets a
+// caller bound the range on both ends for a custom date range (not just
+// "from period start through today").
+async function getPostedLedger(startDate, endDate) {
   const accounts = await odoo.searchRead(
     "account.account",
     [],
@@ -34,6 +57,9 @@ async function getPostedLedger(startDate) {
   const domain = [["parent_state", "=", "posted"]];
   if (startDate) {
     domain.push(["date", ">=", startDate]);
+  }
+  if (endDate) {
+    domain.push(["date", "<=", endDate]);
   }
 
   const lines = await odoo.searchRead(
@@ -101,18 +127,17 @@ exports.getAccountsSummary = async (req, res) => {
   }
 };
 
-// GET /api/accounts/profit-and-loss?period=month|quarter|year
+// GET /api/accounts/profit-and-loss?period=month|quarter|year (or ?startDate=&endDate=)
 exports.getProfitAndLoss = async (req, res) => {
   try {
-    const period = req.query.period || "month";
-    const startDateStr = startDateForPeriod(period);
+    const range = resolveDateRange(req);
 
     // Fully GL-based, matching Odoo's native Profit and Loss report exactly:
     // same posting-date filter (getPostedLedger filters on the GL "date"
     // field, not invoice_date) and same account-type grouping. This no
     // longer mixes in invoice amount_total (which includes tax) — every
     // figure below comes straight from the ledger, tax-exclusive.
-    const { accountById, lines } = await getPostedLedger(startDateStr);
+    const { accountById, lines } = await getPostedLedger(range.startDate, range.endDate);
 
     let totalIncome = 0;
     let salesRevenue = 0;
@@ -152,7 +177,9 @@ exports.getProfitAndLoss = async (req, res) => {
     const netProfit = totalIncome - totalExpenses;
 
     return success(res, {
-      period,
+      period: range.period,
+      dateFrom: range.startDate,
+      dateTo: range.endDate,
       income: {
         lines: [
           { label: "Sales revenue", amount: salesRevenue },
@@ -196,9 +223,15 @@ const SECTION_BY_TYPE = {
 
 exports.getBalanceSheet = async (req, res) => {
   try {
-    const period = req.query.period; // optional: month|quarter|year
-    const startDateStr = period ? startDateForPeriod(period) : undefined;
-    const { accountById, lines } = await getPostedLedger(startDateStr);
+    // Balance sheet is inherently "as of a date", not a from/to range —
+    // a custom ?endDate lets someone pick that as-of date directly
+    // (?startDate is accepted too, for parity with the shared date-range
+    // picker UI, but stays optional since a real balance sheet is
+    // cumulative, not scoped to a period, unless a preset is chosen).
+    const { period, startDate, endDate } = req.query;
+    const startDateStr = startDate || (period ? startDateForPeriod(period) : undefined);
+    const asOf = endDate || new Date().toISOString().slice(0, 10);
+    const { accountById, lines } = await getPostedLedger(startDateStr, endDate || undefined);
 
     // Roll every posted line up to its account first, so each account
     // shows once with its net balance — not one row per journal entry.
@@ -256,7 +289,7 @@ exports.getBalanceSheet = async (req, res) => {
     Object.values(sections).forEach((s) => s.lines.sort((a, b) => a.label.localeCompare(b.label)));
 
     return success(res, {
-      asOf: new Date().toISOString().slice(0, 10),
+      asOf,
       period: period || undefined,
       assets: sections.assets,
       liabilities: sections.liabilities,
@@ -268,13 +301,11 @@ exports.getBalanceSheet = async (req, res) => {
   }
 };
 
-// GET /api/accounts/cash-flow?period=month|quarter|year
+// GET /api/accounts/cash-flow?period=month|quarter|year (or ?startDate=&endDate=)
 exports.getCashFlow = async (req, res) => {
   try {
-    const period = req.query.period || "month";
-    const startDateStr = startDateForPeriod(period);
-
-    const base = [["state", "=", "posted"], ["invoice_date", ">=", startDateStr]];
+    const range = resolveDateRange(req);
+    const base = [["state", "=", "posted"], ["invoice_date", ">=", range.startDate], ["invoice_date", "<=", range.endDate]];
 
     const [sales, purchases] = await Promise.all([
       odoo.searchRead("account.move", [...base, ["move_type", "=", "out_invoice"], ["payment_state", "in", ["paid", "in_payment"]]], ["amount_total"], 1000),
@@ -293,7 +324,9 @@ exports.getCashFlow = async (req, res) => {
     const netChange = operating + investing + financing;
 
     return success(res, {
-      period,
+      period: range.period,
+      dateFrom: range.startDate,
+      dateTo: range.endDate,
       operating: {
         lines: [
           { label: "Cash from sales",        amount: cashFromSales },
@@ -321,10 +354,10 @@ exports.getCashFlow = async (req, res) => {
     return error(res, err.message);
   }
 };
-// GET /api/accounts/general-ledger?account_id=1&period=month|quarter|year
+// GET /api/accounts/general-ledger?account_id=1&period=month|quarter|year (or ?startDate=&endDate=)
 exports.getGeneralLedger = async (req, res) => {
   try {
-    const { account_id, period } = req.query;
+    const { account_id, period, startDate, endDate } = req.query;
 
     if (!account_id) {
       const accounts = await odoo.searchRead("account.account", [], ["id", "name", "code", "account_type"], 500);
@@ -332,7 +365,12 @@ exports.getGeneralLedger = async (req, res) => {
     }
 
     const domain = [["account_id", "=", parseInt(account_id, 10)], ["parent_state", "=", "posted"]];
-    if (period) domain.push(["date", ">=", startDateForPeriod(period)]);
+    if (startDate || endDate) {
+      if (startDate) domain.push(["date", ">=", startDate]);
+      if (endDate) domain.push(["date", "<=", endDate]);
+    } else if (period) {
+      domain.push(["date", ">=", startDateForPeriod(period)]);
+    }
 
     const lines = await odoo.searchRead(
       "account.move.line",
@@ -445,7 +483,7 @@ exports.getDayBook = async (req, res) => {
   }
 };
 
-// GET /api/accounts/trial-balance?period=month|quarter|year (or ?startDate=YYYY-MM-DD)
+// GET /api/accounts/trial-balance?period=month|quarter|year (or ?startDate=&endDate=)
 // Every posted account, its total debit and credit movement, and the net
 // closing balance. Unlike the balance-sheet buckets, this needs debit and
 // credit summed separately per account (not just the net), so it queries
@@ -453,7 +491,7 @@ exports.getDayBook = async (req, res) => {
 // balance field.
 exports.getTrialBalance = async (req, res) => {
   try {
-    const { period } = req.query;
+    const { period, endDate } = req.query;
     const startDate = period ? startDateForPeriod(period) : req.query.startDate;
 
     const accounts = await odoo.searchRead(
@@ -464,6 +502,7 @@ exports.getTrialBalance = async (req, res) => {
 
     const domain = [["parent_state", "=", "posted"]];
     if (startDate) domain.push(["date", ">=", startDate]);
+    if (endDate) domain.push(["date", "<=", endDate]);
 
     const lines = await odoo.searchRead(
       "account.move.line", domain, ["account_id", "debit", "credit"], 8000
@@ -575,7 +614,7 @@ exports.getAgedPartnerBalance = async (req, res) => {
 // customer/supplier owe us right now, and how did we get there".
 exports.getPartnerLedger = async (req, res) => {
   try {
-    const { partner_id, period } = req.query;
+    const { partner_id, period, startDate, endDate } = req.query;
 
     if (!partner_id) {
       const partners = await odoo.searchRead(
@@ -590,7 +629,12 @@ exports.getPartnerLedger = async (req, res) => {
       ["parent_state", "=", "posted"],
       ["account_id.account_type", "in", ["asset_receivable", "liability_payable"]],
     ];
-    if (period) domain.push(["date", ">=", startDateForPeriod(period)]);
+    if (startDate || endDate) {
+      if (startDate) domain.push(["date", ">=", startDate]);
+      if (endDate) domain.push(["date", "<=", endDate]);
+    } else if (period) {
+      domain.push(["date", ">=", startDateForPeriod(period)]);
+    }
 
     const lines = await odoo.searchRead(
       "account.move.line",
@@ -616,20 +660,20 @@ exports.getPartnerLedger = async (req, res) => {
   }
 };
 
-// GET /api/accounts/tax-report?period=month|quarter|year
+// GET /api/accounts/tax-report?period=month|quarter|year (or ?startDate=&endDate=)
 // Groups posted tax lines by tax name, split into output tax (charged to
 // customers on sales) and input tax (paid to suppliers on purchases), so
 // net tax due = output - input.
 exports.getTaxReport = async (req, res) => {
   try {
-    const period = req.query.period || "month";
-    const startDateStr = startDateForPeriod(period);
+    const range = resolveDateRange(req);
 
     const taxLines = await odoo.searchRead(
       "account.move.line",
       [
         ["parent_state", "=", "posted"],
-        ["date", ">=", startDateStr],
+        ["date", ">=", range.startDate],
+        ["date", "<=", range.endDate],
         ["tax_line_id", "!=", false],
       ],
       ["tax_line_id", "debit", "credit", "move_id"],
@@ -637,7 +681,7 @@ exports.getTaxReport = async (req, res) => {
     );
 
     if (taxLines.length === 0) {
-      return success(res, { period, outputTax: [], inputTax: [], totalOutputTax: 0, totalInputTax: 0, netTaxDue: 0 });
+      return success(res, { period: range.period, dateFrom: range.startDate, dateTo: range.endDate, outputTax: [], inputTax: [], totalOutputTax: 0, totalInputTax: 0, netTaxDue: 0 });
     }
 
     const moveIds = [...new Set(taxLines.map((l) => l.move_id?.[0]).filter(Boolean))];
@@ -666,7 +710,9 @@ exports.getTaxReport = async (req, res) => {
     const totalInputTax  = inputRows.reduce((s, r) => s + r.amount, 0);
 
     return success(res, {
-      period,
+      period: range.period,
+      dateFrom: range.startDate,
+      dateTo: range.endDate,
       outputTax: outputRows,
       inputTax: inputRows,
       totalOutputTax,
