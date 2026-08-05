@@ -7,6 +7,10 @@ const {
   getProjects,
   getTasks,
   getTaskAnalysis,
+  createTask,
+  updateTask,
+  updateTaskStatus,
+  deleteTask,
   getTags,
   createTag,
   deleteTag,
@@ -25,6 +29,10 @@ router.use(authenticate, requireModule("projects"));
 
 router.get("/",      getProjects);
 router.get("/tasks", getTasks);
+router.post("/tasks", createTask);
+router.patch("/tasks/:id", updateTask);
+router.patch("/tasks/:id/status", updateTaskStatus);
+router.delete("/tasks/:id", requireManagerTier, deleteTask);
 router.get("/tasks-analysis", getTasksAnalysis);
 router.get("/:id/task-analysis", getTaskAnalysis);
 router.get("/:id/ratings", getRatings);

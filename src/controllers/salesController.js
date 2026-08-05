@@ -7,6 +7,13 @@ exports.getSales = async (req, res) => {
   const limit    = parseInt(req.query.limit  || "20");
   const offset   = parseInt(req.query.offset || "0");
   const sortDir  = (req.query.sort || "desc").toLowerCase() === "asc" ? "asc" : "desc";
+  // sortBy lets a caller ask for the highest-VALUE orders first
+  // (?sortBy=amount_total) instead of the most recent ones. Previously
+  // this always sorted by date_order — which is fine for a general
+  // sales list, but meant the Dashboard's "Top Sales Orders" widget
+  // (which should show the biggest deals) was actually just showing
+  // the newest ones instead.
+  const sortBy   = req.query.sortBy === "amount_total" ? "amount_total" : "date_order";
   try {
     // Employees only see orders where they're the salesperson. Company
     // owners/Admin see every order their Odoo company context allows
@@ -29,7 +36,7 @@ exports.getSales = async (req, res) => {
         "sale.order", domain,
         ["name", "partner_id", "amount_total", "state", "date_order"],
         limit, offset,
-        `date_order ${sortDir}`
+        `${sortBy} ${sortDir}`
       ),
       odoo.searchRead("sale.order", domain, ["amount_total"], 5000),
     ]);
@@ -37,6 +44,43 @@ exports.getSales = async (req, res) => {
     const totalSales = allOrders.reduce((s, o) => s + Number(o.amount_total || 0), 0);
 
     return success(res, { orders, totalSales, totalCount: allOrders.length });
+  } catch (err) {
+    return error(res, err.message);
+  }
+};
+
+// GET /api/sales/:id — single order detail (used by the "view sales
+// order" link from Day Book and anywhere else that needs to open one
+// specific order rather than the list).
+exports.getSaleOrder = async (req, res) => {
+  try {
+    const orderId = parseInt(req.params.id, 10);
+    if (!orderId) return error(res, "A valid order id is required.", 400);
+
+    const domain = withOwnerFilter([["id", "=", orderId]], "user_id.id", req);
+    const orders = await odoo.searchRead(
+      "sale.order", domain,
+      ["name", "partner_id", "amount_total", "amount_untaxed", "amount_tax", "state", "date_order", "user_id"],
+      1
+    );
+    if (!orders.length) return error(res, "Order not found, or you don't have access to it.", 404);
+
+    const lines = await odoo.searchRead(
+      "sale.order.line",
+      [["order_id", "=", orderId], ["display_type", "=", false]],
+      ["name", "product_uom_qty", "price_unit", "price_subtotal"],
+      200
+    );
+
+    return success(res, {
+      ...orders[0],
+      lines: lines.map((l) => ({
+        name: l.name,
+        quantity: l.product_uom_qty,
+        unitPrice: l.price_unit,
+        subtotal: l.price_subtotal,
+      })),
+    });
   } catch (err) {
     return error(res, err.message);
   }

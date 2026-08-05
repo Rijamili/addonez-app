@@ -359,6 +359,20 @@ exports.getGeneralLedger = async (req, res) => {
 };
 
 // GET /api/accounts/day-book?date=YYYY-MM-DD
+// GET /api/accounts/day-book?date=YYYY-MM-DD
+// Returns Cash and Bank journal entries as separate sections (instead of
+// one flat list) — Odoo itself keeps a Cash Book and Bank Book distinct
+// via journal type, and mixing them together made it impossible to tell
+// "how much cash moved today" from "how much moved through the bank".
+// Anything NOT posted through a cash/bank journal (e.g. a customer
+// invoice recorded on accrual, or a manual journal entry) is still
+// returned under "other" so nothing that used to show here disappears.
+//
+// Entries also carry a linked sale order where one exists — Odoo stores
+// the originating document's name (e.g. "S00042") on account.move's
+// invoice_origin field when an invoice was generated from a sale order,
+// so this resolves that name back to the actual sale.order id/name for
+// the app to link straight to it.
 exports.getDayBook = async (req, res) => {
   try {
     const date = req.query.date || new Date().toISOString().slice(0, 10);
@@ -366,21 +380,65 @@ exports.getDayBook = async (req, res) => {
     const lines = await odoo.searchRead(
       "account.move.line",
       [["date", "=", date], ["parent_state", "=", "posted"]],
-      ["date", "move_name", "partner_id", "name", "debit", "credit"],
+      ["date", "move_id", "move_name", "partner_id", "name", "debit", "credit", "journal_id"],
       500
     );
 
-    const totalDebit  = lines.reduce((s, l) => s + Number(l.debit  || 0), 0);
-    const totalCredit = lines.reduce((s, l) => s + Number(l.credit || 0), 0);
+    // Resolve each line's journal type (cash / bank / other) in one
+    // batch read rather than N+1 lookups.
+    const journalIds = [...new Set(lines.map((l) => l.journal_id?.[0]).filter(Boolean))];
+    let journalTypeById = {};
+    if (journalIds.length) {
+      const journals = await odoo.searchRead("account.journal", [["id", "in", journalIds]], ["id", "type"], journalIds.length);
+      journals.forEach((j) => { journalTypeById[j.id] = j.type; });
+    }
+
+    // Resolve the originating sale order for lines whose move came from
+    // one (invoice_origin holds the source document's name as text).
+    const moveIds = [...new Set(lines.map((l) => l.move_id?.[0]).filter(Boolean))];
+    let originByMoveId = {};
+    if (moveIds.length) {
+      const moves = await odoo.searchRead("account.move", [["id", "in", moveIds]], ["id", "invoice_origin"], moveIds.length);
+      moves.forEach((m) => { originByMoveId[m.id] = m.invoice_origin; });
+    }
+    const originNames = [...new Set(Object.values(originByMoveId).filter(Boolean))];
+    let saleOrderByName = {};
+    if (originNames.length) {
+      const orders = await odoo.searchRead("sale.order", [["name", "in", originNames]], ["id", "name"], originNames.length);
+      orders.forEach((o) => { saleOrderByName[o.name] = o.id; });
+    }
+
+    const toRow = (l) => {
+      const origin = originByMoveId[l.move_id?.[0]];
+      const saleOrderId = origin ? saleOrderByName[origin] : null;
+      return {
+        voucher: l.move_name,
+        party: l.partner_id?.[1] || "",
+        description: l.name,
+        debit: Number(l.debit || 0),
+        credit: Number(l.credit || 0),
+        saleOrderId: saleOrderId || null,
+        saleOrderName: saleOrderId ? origin : null,
+      };
+    };
+
+    const section = (rows) => ({
+      transactions: rows.map(toRow),
+      totalDebit: rows.reduce((s, l) => s + Number(l.debit || 0), 0),
+      totalCredit: rows.reduce((s, l) => s + Number(l.credit || 0), 0),
+    });
+
+    const cashLines  = lines.filter((l) => journalTypeById[l.journal_id?.[0]] === "cash");
+    const bankLines  = lines.filter((l) => journalTypeById[l.journal_id?.[0]] === "bank");
+    const otherLines = lines.filter((l) => !["cash", "bank"].includes(journalTypeById[l.journal_id?.[0]]));
 
     return success(res, {
       date,
-      transactions: lines.map((l) => ({
-        voucher: l.move_name, party: l.partner_id?.[1] || "", description: l.name,
-        debit: Number(l.debit || 0), credit: Number(l.credit || 0),
-      })),
-      totalDebit,
-      totalCredit,
+      cash: section(cashLines),
+      bank: section(bankLines),
+      other: section(otherLines),
+      totalDebit:  lines.reduce((s, l) => s + Number(l.debit  || 0), 0),
+      totalCredit: lines.reduce((s, l) => s + Number(l.credit || 0), 0),
     });
   } catch (err) {
     return error(res, err.message);

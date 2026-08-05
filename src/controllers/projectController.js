@@ -70,6 +70,143 @@ exports.getTasks = async (req, res) => {
   }
 };
 
+// ---------------------------------------------------------------------
+// Task handler — create/update/delete, plus a simplified status changer
+// (Started / Ongoing / Completed) for employees who don't need to know
+// about a project's actual Odoo kanban stage names.
+// ---------------------------------------------------------------------
+
+async function assertTaskAccess(req, task) {
+  if (!isOwnDataOnly(req)) return;
+  const { uid } = req.user;
+  if (!(task.user_ids || []).includes(uid)) {
+    throw Object.assign(new Error("You can only update tasks assigned to you."), { status: 403 });
+  }
+}
+
+// Maps our simplified 3-state model onto whatever kanban stages this
+// project actually has configured in Odoo (these vary per project — Odoo
+// doesn't have a single fixed set of task stages). Tries to match by
+// name first (covers the vast majority of real projects — "To Do",
+// "In Progress", "Done" and close variants); if nothing matches, falls
+// back to position: first stage by sequence = Started, last = Completed,
+// anything in between = Ongoing.
+const STATUS_KEYWORDS = {
+  started:   ["new", "to do", "todo", "backlog", "open", "start"],
+  ongoing:   ["progress", "doing", "ongoing", "working", "review"],
+  completed: ["done", "complete", "closed", "finished", "cancel"],
+};
+
+async function resolveStageId(projectId, statusKey) {
+  const stages = await odoo.searchRead(
+    "project.task.type",
+    [["project_ids", "in", [projectId]]],
+    ["id", "name", "sequence"],
+    50, 0, "sequence asc"
+  );
+  if (!stages.length) throw new Error("This project has no task stages configured.");
+
+  const keywords = STATUS_KEYWORDS[statusKey] || [];
+  const byKeyword = stages.find((s) => keywords.some((k) => s.name.toLowerCase().includes(k)));
+  if (byKeyword) return byKeyword.id;
+
+  // Positional fallback.
+  if (statusKey === "started") return stages[0].id;
+  if (statusKey === "completed") return stages[stages.length - 1].id;
+  return stages[Math.floor(stages.length / 2)].id; // "ongoing" -> a middle stage
+}
+
+// POST /api/projects/tasks
+// body: { projectId, name, description?, deadline?, priority?, assigneeIds? }
+exports.createTask = async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const { projectId, name, description, deadline, priority, assigneeIds } = req.body;
+    if (!projectId || !name) return error(res, "projectId and name are required.", 400);
+
+    await assertProjectAccess(req, parseInt(projectId, 10));
+
+    // Employees can only create tasks assigned to themselves — assigning
+    // work to OTHER people is a Company/Admin action.
+    const finalAssignees = isOwnDataOnly(req)
+      ? [uid]
+      : (Array.isArray(assigneeIds) && assigneeIds.length ? assigneeIds.map((id) => parseInt(id, 10)) : [uid]);
+
+    const values = {
+      project_id: parseInt(projectId, 10),
+      name,
+      user_ids: [[6, 0, finalAssignees]],
+    };
+    if (description) values.description = description;
+    if (deadline) values.date_deadline = deadline;
+    if (priority) values.priority = priority;
+
+    const id = await odoo.execute("project.task", "create", [values]);
+    return success(res, { id: Array.isArray(id) ? id[0] : id }, "Task created.");
+  } catch (err) {
+    return error(res, err.message, err.status || 500);
+  }
+};
+
+// PATCH /api/projects/tasks/:id
+// body: any of { name, description, deadline, priority, tagIds }
+exports.updateTask = async (req, res) => {
+  try {
+    const taskId = parseInt(req.params.id, 10);
+    const task = await odoo.searchRead("project.task", [["id", "=", taskId]], ["user_ids", "project_id"], 1);
+    if (!task.length) return error(res, "Task not found.", 404);
+    await assertTaskAccess(req, task[0]);
+
+    const { name, description, deadline, priority, tagIds } = req.body;
+    const values = {};
+    if (name !== undefined) values.name = name;
+    if (description !== undefined) values.description = description;
+    if (deadline !== undefined) values.date_deadline = deadline;
+    if (priority !== undefined) values.priority = priority;
+    if (Array.isArray(tagIds)) values.tag_ids = [[6, 0, tagIds.map((id) => parseInt(id, 10))]];
+
+    await odoo.execute("project.task", "write", [[taskId], values]);
+    return success(res, null, "Task updated.");
+  } catch (err) {
+    return error(res, err.message, err.status || 500);
+  }
+};
+
+// PATCH /api/projects/tasks/:id/status
+// body: { status: "started" | "ongoing" | "completed" }
+exports.updateTaskStatus = async (req, res) => {
+  try {
+    const taskId = parseInt(req.params.id, 10);
+    const { status } = req.body;
+    if (!["started", "ongoing", "completed"].includes(status)) {
+      return error(res, "status must be one of: started, ongoing, completed.", 400);
+    }
+
+    const task = await odoo.searchRead("project.task", [["id", "=", taskId]], ["user_ids", "project_id"], 1);
+    if (!task.length) return error(res, "Task not found.", 404);
+    await assertTaskAccess(req, task[0]);
+
+    const projectId = task[0].project_id?.[0];
+    if (!projectId) return error(res, "This task isn't linked to a project.", 400);
+
+    const stageId = await resolveStageId(projectId, status);
+    await odoo.execute("project.task", "write", [[taskId], { stage_id: stageId }]);
+    return success(res, { status, stageId }, `Task marked as ${status}.`);
+  } catch (err) {
+    return error(res, err.message, err.status || 500);
+  }
+};
+
+// DELETE /api/projects/tasks/:id  (Company/Admin only)
+exports.deleteTask = async (req, res) => {
+  try {
+    await odoo.execute("project.task", "unlink", [[parseInt(req.params.id, 10)]]);
+    return success(res, null, "Task deleted.");
+  } catch (err) {
+    return error(res, err.message);
+  }
+};
+
 // GET /api/projects/tags
 exports.getTags = async (req, res) => {
   try {
