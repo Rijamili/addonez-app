@@ -190,11 +190,24 @@ const forgotPassword = async (req, res) => {
         console.log(`forgotPassword: action_reset_password triggered for user ${user.id} (${email}) on tenant "${tenant.id}"`);
       });
     } catch (err) {
-      // Most likely cause: that tenant's Odoo instance doesn't have an
-      // outgoing mail server configured, so action_reset_password can't
-      // actually send anything — but any other Odoo-side failure would
-      // also land here.
-      console.error(`forgotPassword: action_reset_password FAILED for email "${email}" on tenant "${tenant.id}":`, err.message);
+      // Odoo's action_reset_password sends the actual reset email BEFORE
+      // it builds the return value (a UI notification action meant for
+      // the browser) — so a failure at THIS specific point (XML-RPC
+      // failing to serialize that return value back to us) can still
+      // mean the email itself went out fine; only the response crashed
+      // afterward. Distinguishing this from a genuine failure (auth
+      // error, method missing, etc.) avoids logging a false "FAILED"
+      // for what's likely just a cosmetic response-serialization issue.
+      const looksLikeResponseSerializationFault =
+        /xmlrpc\.client\.dumps|in dumps|cannot marshal/i.test(err.message || "");
+
+      if (looksLikeResponseSerializationFault) {
+        console.warn(
+          `forgotPassword: action_reset_password for email "${email}" on tenant "${tenant.id}" hit a response-serialization fault AFTER Odoo would have already sent the email — likely NOT a real failure. Verify in that tenant's Settings → Technical → Email → Emails. Raw error: ${err.message}`
+        );
+      } else {
+        console.error(`forgotPassword: action_reset_password FAILED for email "${email}" on tenant "${tenant.id}":`, err.message);
+      }
     }
   }
 
