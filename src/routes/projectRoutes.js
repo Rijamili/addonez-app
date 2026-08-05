@@ -11,6 +11,7 @@ const {
   updateTask,
   updateTaskStatus,
   deleteTask,
+  getAssignableUsers,
   getTags,
   createTag,
   deleteTag,
@@ -28,6 +29,7 @@ const {
 router.use(authenticate, requireModule("projects"));
 
 router.get("/",      getProjects);
+router.get("/users", getAssignableUsers);
 router.get("/tasks", getTasks);
 router.post("/tasks", createTask);
 router.patch("/tasks/:id", updateTask);

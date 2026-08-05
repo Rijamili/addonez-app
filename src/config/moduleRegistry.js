@@ -25,6 +25,7 @@ const MODULE_REGISTRY = [
   // checked against the logged-in user's own groupIds from their JWT.
   { key: "sales", name: "Sales", icon: "shopping-cart", odooModule: "sale", groupXmlId: ["sales_team.group_sale_salesman", "sales_team.group_sale_salesman_all_leads", "sales_team.group_sale_manager"] },
   { key: "projects", name: "Projects", icon: "folder", odooModule: "project", groupXmlId: ["project.group_project_user", "project.group_project_manager"] },
+  { key: "timesheets", name: "Timesheets", icon: "clock", odooModule: "hr_timesheet", groupXmlId: ["hr_timesheet.group_hr_timesheet_user", "hr_timesheet.group_timesheet_manager"] },
 
   // "Finance" is the parent screen for accounting reports. It's driven by
   // the "account" app specifically (not crm/mrp) — crm/manufacturing are

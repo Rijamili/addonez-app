@@ -215,6 +215,24 @@ exports.deleteTask = async (req, res) => {
   }
 };
 
+// GET /api/projects/users — assignable Odoo users for the New Task
+// assignee picker. Deliberately res.users, not hr.employee: project.task's
+// user_ids field expects res.users ids, which are a different id space
+// from hr.employee ids (an employee's linked user is employee.user_id).
+exports.getAssignableUsers = async (req, res) => {
+  try {
+    const users = await odoo.searchRead(
+      "res.users",
+      [["share", "=", false]], // excludes portal/public users, keeps internal staff only
+      ["id", "name"],
+      200, 0, "name asc"
+    );
+    return success(res, users);
+  } catch (err) {
+    return error(res, err.message);
+  }
+};
+
 // GET /api/projects/tags
 exports.getTags = async (req, res) => {
   try {
