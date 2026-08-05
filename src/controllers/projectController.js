@@ -45,6 +45,14 @@ exports.getTasks = async (req, res) => {
     if (req.query.tagId) domain.push(["tag_ids", "in", [parseInt(req.query.tagId, 10)]]);
     if (req.query.search) domain.push(["name", "ilike", req.query.search]);
 
+    // TEMPORARY diagnostic — remove once confirmed. Shows exactly what
+    // role/scope this request resolved to and what domain got applied,
+    // so a "only seeing my own tasks" report can be told apart from a
+    // stale deployment vs. an actual role-resolution bug.
+    console.log(
+      `getTasks: uid=${uid} attendanceRole=${req.user.attendanceRole} scope=${req.query.scope || "(none)"} isOwnDataOnly=${isOwnDataOnly(req)} domain=${JSON.stringify(domain)}`
+    );
+
     const tasks = await odoo.searchRead(
       "project.task", domain,
       ["name", "project_id", "stage_id", "date_deadline", "priority", "tag_ids", "user_ids"], 200
