@@ -214,8 +214,8 @@ const forgotPassword = async (req, res) => {
     console.warn(`forgotPassword: no tenant found for email "${email}"`);
   } else {
     try {
-      await triggerOdooWebResetPassword(tenant.host, email);
-      console.log(`forgotPassword: submitted to ${tenant.host}/web/reset_password for "${email}" (tenant "${tenant.id}")`);
+      await triggerOdooWebResetPassword(tenant.odoo.host, email);
+      console.log(`forgotPassword: submitted to ${tenant.odoo.host}/web/reset_password for "${email}" (tenant "${tenant.id}")`);
     } catch (err) {
       console.error(`forgotPassword: FAILED for email "${email}" on tenant "${tenant.id}":`, err.message);
     }
