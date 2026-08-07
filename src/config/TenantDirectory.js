@@ -121,7 +121,7 @@ console.log("=================================");
   // Auto-register with AI Insights so no manual DB mapping is needed.
   registerWithAiInsights(id, name);
 
- return this.findById(id);
+  return tenant;
 }
   async addUserEmail(tenantId, email) {
   const tenant = this._byId.get(tenantId);
