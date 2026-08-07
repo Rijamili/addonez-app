@@ -22,7 +22,7 @@ const hasProject =
     const orderDomain = ownScope ? [["state", "in", ["sale", "done"]], ["user_id.id", "=", uid]] : [["state", "in", ["sale", "done"]]];
     const quoteDomain = ownScope ? [["state", "=", "draft"], ["user_id.id", "=", uid]] : [["state", "=", "draft"]];
     const invoiceDomain = ownScope ? [...postedInvoiceDomain, ["invoice_user_id", "=", uid]] : postedInvoiceDomain;
-    const projectDomain = []; // narrowed below for employees, via task membership
+    // const projectDomain = []; // narrowed below for employees, via task membership
     const taskDomain = ownScope ? [["stage_id.fold", "=", false], ["user_ids", "in", [uid]]] : [["stage_id.fold", "=", false]];
 
     const [orders, quotations, postedInvoices, invoices] = await Promise.all([
@@ -56,10 +56,7 @@ if (hasProject) {
     : await odoo.searchCount("project.project", []);
 }
 
-    const projects = ownScope
-      ? new Set((myTasksForProjects || []).map((t) => t.project_id?.[0]).filter(Boolean)).size
-      : await odoo.searchCount("project.project", projectDomain);
-
+  
     const totalRevenue = postedInvoices.reduce((s, o) => s + (o.amount_total || 0), 0);
 
     return success(res, {
