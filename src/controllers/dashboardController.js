@@ -9,9 +9,8 @@ exports.getDashboard = async (req, res) => {
     const installedModules = await getInstalledModules(req.tenant?.id);
 
 const hasProject =
-  installedModules.includes("project") ||
-  installedModules.includes("project_enterprise");
-
+  installedModules.has("project") ||
+  installedModules.has("project_enterprise");
     // Revenue must reflect posted invoices only — not draft sale orders.
     // Filtering on state = "posted" also means a later cancellation
     // (state -> "cancel") drops the invoice out of this sum automatically.
