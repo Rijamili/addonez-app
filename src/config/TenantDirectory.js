@@ -121,7 +121,14 @@ console.log("=================================");
   // Auto-register with AI Insights so no manual DB mapping is needed.
   registerWithAiInsights(id, name);
 
-  return tenant;
+  // Return the reshaped in-memory tenant (nested { odoo: { host, db, ... } }
+  // format), NOT the raw Sequelize row `tenant` — that only has flat
+  // columns like tenant.host, not tenant.odoo.host, which is what every
+  // caller of addTenant() (and every other TenantDirectory method)
+  // actually expects. Returning the raw row here was crashing
+  // createTenant() with "Cannot read properties of undefined (reading
+  // 'host')" the moment it tried to read the created tenant back.
+  return this.findById(id);
 }
   async addUserEmail(tenantId, email) {
   const tenant = this._byId.get(tenantId);
