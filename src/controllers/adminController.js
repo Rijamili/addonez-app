@@ -182,6 +182,33 @@ const updateTenant = async (req, res) => {
 
 
 
+// DELETE /api/admin/tenants/:tenantId
+// Irreversible, so this requires the caller to send { confirm: true } in
+// the body — a bare DELETE with no body is easy to fire accidentally
+// (e.g. a stray retry, a copy-pasted curl command), and there's no undo
+// once a tenant's row and its TenantUser rows are gone.
+const deleteTenant = async (req, res) => {
+  const { tenantId } = req.params;
+
+  const tenant = TenantDirectory.findById(tenantId);
+  if (!tenant) return error(res, `Tenant "${tenantId}" not found.`, 404);
+
+  if (req.body?.confirm !== true) {
+    return error(
+      res,
+      `This will permanently delete tenant "${tenantId}" (${tenant.name}) and all ${tenant.users.length} user(s) registered to it. Resend with { "confirm": true } to proceed.`,
+      400
+    );
+  }
+
+  try {
+    await TenantDirectory.removeTenant(tenantId);
+    return success(res, null, `Tenant "${tenantId}" deleted.`);
+  } catch (err) {
+    return error(res, err.message, 409);
+  }
+};
+
 // GET /api/admin/tenants
 const listTenants = async (req, res) => {
   return success(res, TenantDirectory.list());
@@ -244,4 +271,28 @@ const debugProductFields = async (req, res) => {
   return success(res, result);
 };
 
-module.exports = { createTenant, updateTenant, addUser, removeUser, listTenants, debugUserFields, debugProductFields };
+// TEMPORARY diagnostic — GET /api/admin/debug/module-search?q=timesheet
+// Finds every ir.module.module whose name OR display name matches the
+// search term, with its install state. Use this whenever a module isn't
+// showing up as expected in the drawer, instead of assuming the
+// "standard" Odoo technical name is actually what this instance uses —
+// we already got burned once assuming product.product's "type" field
+// worked the standard way on this Odoo 19 build when it didn't.
+const debugModuleSearch = async (req, res) => {
+  const q = req.query.q || "";
+  if (!q) return error(res, "Pass ?q=searchterm", 400);
+
+  try {
+    const modules = await odoo.searchRead(
+      "ir.module.module",
+      ["|", ["name", "ilike", q], ["shortdesc", "ilike", q]],
+      ["name", "shortdesc", "state"],
+      50
+    );
+    return success(res, modules);
+  } catch (err) {
+    return error(res, "Module search failed: " + err.message, 500);
+  }
+};
+
+module.exports = { createTenant, updateTenant, deleteTenant, addUser, removeUser, listTenants, debugUserFields, debugProductFields, debugModuleSearch };

@@ -198,6 +198,32 @@ console.log("=================================");
 
   return this._byId.get(tenantId);
 }
+
+  // Deletes a tenant entirely — including every TenantUser row tied to
+  // it first, since there's no DB-level cascade configured on that
+  // foreign key and an orphaned tenant_users row would just be dead
+  // weight (worse, a future tenant reusing the same tenant_id string
+  // would inherit it). Irreversible — the caller (adminController) is
+  // responsible for requiring explicit confirmation before calling this.
+  async removeTenant(tenantId) {
+  const tenant = await Tenant.findOne({
+    where: { tenant_id: tenantId },
+  });
+
+  if (!tenant) {
+    throw new Error(`Tenant "${tenantId}" not found.`);
+  }
+
+  await TenantUser.destroy({
+    where: { tenant_id: tenantId },
+  });
+
+  await tenant.destroy();
+
+  await this.load();
+
+  return true;
+}
   findByEmail(email) {
   if (!email) return null;
 

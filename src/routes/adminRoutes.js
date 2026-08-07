@@ -2,7 +2,7 @@
 const express  = require("express");
 const router   = express.Router();
 const { body, param } = require("express-validator");
-const { createTenant, updateTenant, addUser, removeUser, listTenants, debugUserFields, debugProductFields } = require("../controllers/adminController");
+const { createTenant, updateTenant, deleteTenant, addUser, removeUser, listTenants, debugUserFields, debugProductFields, debugModuleSearch } = require("../controllers/adminController");
 const { authenticate, authorize } = require("../middleware/auth");
 const { validate } = require("../middleware/validate");
 
@@ -44,6 +44,11 @@ router.patch("/tenants/:tenantId",
   updateTenant
 );
 
+router.delete("/tenants/:tenantId",
+  [param("tenantId").notEmpty(), validate],
+  deleteTenant
+);
+
 router.post("/tenants/:tenantId/users",
   [param("tenantId").notEmpty(), body("email").isEmail(), validate],
   addUser
@@ -65,5 +70,7 @@ router.get("/debug/user-fields", debugUserFields);
 // TEMPORARY — remove once the Manufacturing "type=product" XML-RPC
 // fault is confirmed fixed. See debugProductFields for what it checks.
 router.get("/debug/product-fields", debugProductFields);
+
+router.get("/debug/module-search", debugModuleSearch);
 
 module.exports = router;
