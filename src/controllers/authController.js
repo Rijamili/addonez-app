@@ -72,11 +72,32 @@ console.log("Groups:", user.groups_id);
         attendanceRole = "admin";
       } else {
         try {
-          const isManager = await odoo.execute("res.users", "has_group", [
+          // base.group_system (Odoo's core "Settings / Administrator"
+          // access) always exists — it's part of the base module, which
+          // every Odoo database has regardless of which optional apps
+          // (hr_attendance, project, etc.) happen to be installed yet.
+          // Checking this FIRST means a tenant's own Odoo admin account
+          // (e.g. the credential used to set the whole tenant up) is
+          // correctly treated as company-level even on a brand new
+          // tenant where Attendance isn't installed — previously,
+          // has_group() on a non-existent hr_attendance group quietly
+          // returned false (not an error), which read as "not a
+          // manager" and incorrectly downgraded a real admin to
+          // "employee", scoping their whole dashboard down to zero.
+          const isSystemAdmin = await odoo.execute("res.users", "has_group", [
             [user.id],
-            "hr_attendance.group_hr_attendance_manager",
+            "base.group_system",
           ]);
-          attendanceRole = isManager ? "company" : "employee";
+
+          if (isSystemAdmin) {
+            attendanceRole = "company";
+          } else {
+            const isManager = await odoo.execute("res.users", "has_group", [
+              [user.id],
+              "hr_attendance.group_hr_attendance_manager",
+            ]);
+            attendanceRole = isManager ? "company" : "employee";
+          }
         } catch (e) {
           // has_group unavailable (module not installed, or method
           // missing on this Odoo version) — fall back to "does this
