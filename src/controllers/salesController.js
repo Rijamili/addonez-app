@@ -45,6 +45,15 @@ exports.getSales = async (req, res) => {
 
     return success(res, { orders, totalSales, totalCount: allOrders.length });
   } catch (err) {
+    // A fresh tenant whose Odoo doesn't have the Sales app installed
+    // yet will fail here with "Object sale.order doesn't exist" — the
+    // Dashboard's "Top Sales Orders" widget calls this unconditionally
+    // (it isn't gated behind requireModule("sales") the way the Sales
+    // screen itself is), so this needs to degrade to an empty result
+    // rather than 500 and take the whole dashboard down with it.
+    if (/doesn't exist|does not exist/i.test(err.message || "")) {
+      return success(res, { orders: [], totalSales: 0, totalCount: 0 });
+    }
     return error(res, err.message);
   }
 };
@@ -98,6 +107,12 @@ exports.getMonthlySales = async (req, res) => {
     });
     return success(res, Object.keys(months).map((month) => ({ month, amount: months[month] })));
   } catch (err) {
+    // Same "Sales app not installed yet on this fresh tenant" case as
+    // getSales — degrade to an empty (all-zero) chart instead of 500ing.
+    if (/doesn't exist|does not exist/i.test(err.message || "")) {
+      const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      return success(res, months.map((month) => ({ month, amount: 0 })));
+    }
     return error(res, err.message);
   }
 };

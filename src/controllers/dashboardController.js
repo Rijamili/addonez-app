@@ -20,20 +20,31 @@ exports.getDashboard = async (req, res) => {
     const projectDomain = []; // narrowed below for employees, via task membership
     const taskDomain = ownScope ? [["stage_id.fold", "=", false], ["user_ids", "in", [uid]]] : [["stage_id.fold", "=", false]];
 
+    // Each metric is independently resilient — a tenant that doesn't
+    // have the Projects app installed (common on a fresh tenant, e.g.
+    // "Object project.task doesn't exist") should just show 0 for
+    // Projects/Tasks, not take down Revenue/Orders/Invoices too. Same
+    // logic applies if Sales or Accounting isn't installed either —
+    // this dashboard should show whatever IS available.
+    const safe = (promise, fallback) => promise.catch((err) => {
+      console.warn("dashboard: metric failed, degrading to fallback:", err.message);
+      return fallback;
+    });
+
     const [orders, quotations, postedInvoices, invoices, myTasksForProjects, tasks] = await Promise.all([
-      odoo.searchCount("sale.order", orderDomain),
-      odoo.searchCount("sale.order", quoteDomain),
+      safe(odoo.searchCount("sale.order", orderDomain), 0),
+      safe(odoo.searchCount("sale.order", quoteDomain), 0),
       // Explicit limit — searchRead defaults to 80 records, which would
       // silently under-count revenue once there are more posted invoices than that.
-      odoo.searchRead("account.move", invoiceDomain, ["amount_total"], 10000),
-      odoo.searchCount("account.move", invoiceDomain),
-      ownScope ? odoo.searchRead("project.task", [["user_ids", "in", [uid]]], ["project_id"], 2000) : Promise.resolve(null),
-      odoo.searchCount("project.task", taskDomain),
+      safe(odoo.searchRead("account.move", invoiceDomain, ["amount_total"], 10000), []),
+      safe(odoo.searchCount("account.move", invoiceDomain), 0),
+      ownScope ? safe(odoo.searchRead("project.task", [["user_ids", "in", [uid]]], ["project_id"], 2000), []) : Promise.resolve(null),
+      safe(odoo.searchCount("project.task", taskDomain), 0),
     ]);
 
     const projects = ownScope
       ? new Set((myTasksForProjects || []).map((t) => t.project_id?.[0]).filter(Boolean)).size
-      : await odoo.searchCount("project.project", projectDomain);
+      : await safe(odoo.searchCount("project.project", projectDomain), 0);
 
     const totalRevenue = postedInvoices.reduce((s, o) => s + (o.amount_total || 0), 0);
 
