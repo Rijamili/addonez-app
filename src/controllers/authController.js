@@ -116,6 +116,7 @@ console.log("Groups:", user.groups_id);
           role,
           attendanceRole,
           employeeId,
+          tenantId: tenant.id,
         },
       };
     });
