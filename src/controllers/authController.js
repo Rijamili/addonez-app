@@ -8,21 +8,16 @@ const { generateToken } = require("../utils/jwt");
 const { success, error } = require("../utils/response");
 
 const login = async (req, res) => {
-  const { email, password } = req.body;
-
+  const { tenantId, email, password } = req.body;
   console.log("========== LOGIN ==========");
   console.log("Email:", email);
 
-  const tenant = TenantDirectory.findByEmail(email);
+  const tenant = TenantDirectory.findById(tenantId);
   console.log("Tenant:", tenant);
 
   if (!tenant) {
-    return error(
-      res,
-      "We couldn't find an organization for that email.",
-      404
-    );
-  }
+    return error(res, "Organization not found.", 404);
+}
 
   try {
     const { token, user } = await requestContext.run(tenant, async () => {
@@ -203,8 +198,9 @@ async function triggerOdooWebResetPassword(host, email) {
 }
 
 const forgotPassword = async (req, res) => {
-  const { email } = req.body;
-  const tenant = TenantDirectory.findByEmail(email);
+  const { tenantId, email } = req.body;
+
+const tenant = TenantDirectory.findById(tenantId);
 
   // The response to the CLIENT always stays the same generic message
   // regardless of what happens below — that's intentional (never reveal
