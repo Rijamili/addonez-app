@@ -96,13 +96,28 @@ console.log("Database:", odooConfig.db);
       : kwargs;
 
     return new Promise((resolve, reject) => {
-      clients.models.methodCall("execute_kw", [db, uid, password, model, method, args, finalKwargs], (err, result) => {
-        if (err) {
-          if (err.message?.includes("AccessDenied")) this._adminAuthByTenant.delete(key);
-          return reject(new Error(`[${model}.${method}]: ${err.message}`));
-        }
-        resolve(result);
-      });
+      clients.models.methodCall(
+  "execute_kw",
+  [db, uid, password, model, method, args, finalKwargs],
+  (err, result) => {
+    if (err) {
+      console.error("========== XML-RPC ERROR ==========");
+      console.error("Model :", model);
+      console.error("Method:", method);
+      console.error("Args  :", JSON.stringify(args, null, 2));
+      console.error("Error :", err);
+      console.error("===================================");
+
+      if (err.message?.includes("AccessDenied")) {
+        this._adminAuthByTenant.delete(key);
+      }
+
+      return reject(new Error(`[${model}.${method}]: ${err.message}`));
+    }
+
+    resolve(result);
+  }
+);
     });
   }
 
