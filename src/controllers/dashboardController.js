@@ -1,11 +1,16 @@
 const odoo = require("../config/OdooService");
 const { success, error } = require("../utils/response");
 const { isOwnDataOnly } = require("../config/dataScope");
-
+const { getInstalledModules } = require("../config/moduleAccessService");
 exports.getDashboard = async (req, res) => {
   try {
     const { uid } = req.user;
     const ownScope = isOwnDataOnly(req);
+    const installedModules = await getInstalledModules(req.tenant?.id);
+
+const hasProject =
+  installedModules.includes("project") ||
+  installedModules.includes("project_enterprise");
 
     // Revenue must reflect posted invoices only — not draft sale orders.
     // Filtering on state = "posted" also means a later cancellation
@@ -20,16 +25,36 @@ exports.getDashboard = async (req, res) => {
     const projectDomain = []; // narrowed below for employees, via task membership
     const taskDomain = ownScope ? [["stage_id.fold", "=", false], ["user_ids", "in", [uid]]] : [["stage_id.fold", "=", false]];
 
-    const [orders, quotations, postedInvoices, invoices, myTasksForProjects, tasks] = await Promise.all([
-      odoo.searchCount("sale.order", orderDomain),
-      odoo.searchCount("sale.order", quoteDomain),
-      // Explicit limit — searchRead defaults to 80 records, which would
-      // silently under-count revenue once there are more posted invoices than that.
-      odoo.searchRead("account.move", invoiceDomain, ["amount_total"], 10000),
-      odoo.searchCount("account.move", invoiceDomain),
-      ownScope ? odoo.searchRead("project.task", [["user_ids", "in", [uid]]], ["project_id"], 2000) : Promise.resolve(null),
-      odoo.searchCount("project.task", taskDomain),
-    ]);
+    const [orders, quotations, postedInvoices, invoices] = await Promise.all([
+  odoo.searchCount("sale.order", orderDomain),
+  odoo.searchCount("sale.order", quoteDomain),
+  odoo.searchRead("account.move", invoiceDomain, ["amount_total"], 10000),
+  odoo.searchCount("account.move", invoiceDomain),
+]);
+
+let tasks = 0;
+let projects = 0;
+
+if (hasProject) {
+  const myTasksForProjects = ownScope
+    ? await odoo.searchRead(
+        "project.task",
+        [["user_ids", "in", [uid]]],
+        ["project_id"],
+        2000
+      )
+    : null;
+
+  tasks = await odoo.searchCount("project.task", taskDomain);
+
+  projects = ownScope
+    ? new Set(
+        (myTasksForProjects || [])
+          .map((t) => t.project_id?.[0])
+          .filter(Boolean)
+      ).size
+    : await odoo.searchCount("project.project", []);
+}
 
     const projects = ownScope
       ? new Set((myTasksForProjects || []).map((t) => t.project_id?.[0]).filter(Boolean)).size
