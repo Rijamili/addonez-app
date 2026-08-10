@@ -1,186 +1,217 @@
 // src/controllers/outletController.js
+//
+// Fully generic custom-app browser — works for ANY tenant's bespoke
+// Odoo module automatically. The only tenant-specific fact needed is
+// the module's technical name (config/outletModuleConfig.js); every
+// menu item, screen, field label, and value comes from live Odoo
+// metadata, not hardcoded mappings. This trades away the specialized
+// hand-crafted dashboard-with-KPI-cards look for genuine zero-config
+// multi-tenancy — any new company's custom app "just works" the
+// moment their module name is added to the config.
+
 const odoo = require("../config/OdooService");
 const { success, error } = require("../utils/response");
-const { SCREENS, ENABLED_TENANT_IDS } = require("../config/outletModuleConfig");
+const { getModuleName, friendlyLabel } = require("../config/outletModuleConfig");
 
-// GET /api/outlet/screens — lets the app build its own menu (Dashboard,
-// Data Entry, Reports, Salary, Configuration) from this one config
-// instead of hardcoding the list of screens in the client too.
-exports.getScreens = async (req, res) => {
-  const screens = Object.entries(SCREENS).map(([key, s]) => ({
-    key,
-    label: s.label,
-    confirmed: !!s.model,
-  }));
-  return success(res, screens);
-};
-
-// GET /api/outlet/dashboard
-// Purpose-built handler (not the generic getScreenData passthrough) —
-// the real Dashboard shows aggregated numbers per outlet (Yesterday
-// Sale, This Month Sale, Monthly Avg Food Cost %), not raw rows, so it
-// needs actual grouping logic. Built on the SAME confirmed model as
-// Daily Data Entry (juicy.daily.entry) rather than chasing down the
-// dashboard's own action id, since every number it needs is already
-// available there.
-exports.getDashboard = async (req, res) => {
-  const screen = SCREENS.dailyDataEntry;
-  if (!screen.model) {
-    return error(
-      res,
-      "Dashboard needs Daily Data Entry's model confirmed first (they share the same underlying data) — see config/outletModuleConfig.js.",
-      501
-    );
+function requireModuleName(req) {
+  const moduleName = getModuleName(req.tenant?.id);
+  if (!moduleName) {
+    throw Object.assign(new Error("This module isn't configured for your company yet."), { status: 403 });
   }
+  return moduleName;
+}
 
+// System/mixin fields present on almost every Odoo model (mail.thread,
+// mail.activity.mixin, base ORM fields) — these are never what a
+// business user actually wants to see on a custom screen, so they're
+// filtered out everywhere below. This is what lets field lists render
+// cleanly without ever needing a per-tenant "which fields matter" list.
+const SYSTEM_FIELD_PATTERNS = [
+  /^id$/, /^display_name$/, /^__last_update$/,
+  /^create_(uid|date)$/, /^write_(uid|date)$/,
+  /^activity_/, /^message_/, /^website_message_ids$/, /^my_activity_/, /^has_message$/,
+];
+const isBusinessField = (fieldName) => !SYSTEM_FIELD_PATTERNS.some((p) => p.test(fieldName));
+
+// Field types that render sensibly in a simple generic table. Complex
+// relational collections (one2many/many2many lists of sub-records)
+// aren't shown inline — they'd need their own dedicated sub-screen,
+// which is exactly the kind of per-model customization this generic
+// approach deliberately avoids.
+const RENDERABLE_TYPES = ["char", "text", "integer", "float", "monetary", "boolean", "date", "datetime", "selection", "many2one"];
+
+// GET /api/outlet/menu — builds the real menu tree for this tenant's
+// custom module straight from Odoo's own ir.model.data + ir.ui.menu,
+// instead of a hardcoded per-tenant menu structure.
+exports.getMenu = async (req, res) => {
   try {
-    const today = new Date();
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayStr = yesterday.toISOString().slice(0, 10);
-    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
+    const moduleName = requireModuleName(req);
 
-    const rows = await odoo.searchRead(
-      screen.model,
-      [["entry_date", ">=", monthStart]],
-      ["entry_date", "company_id", "sales_amount", "food_cost_percentage_mtd"],
-      2000,
-      0,
-      "entry_date desc"
+    // Every menu ir.ui.menu record this module ships is registered in
+    // ir.model.data with module=<technical name>, model='ir.ui.menu' —
+    // this is the authoritative, version-independent way to find them.
+    const menuData = await odoo.searchRead(
+      "ir.model.data",
+      [["module", "=", moduleName], ["model", "=", "ir.ui.menu"]],
+      ["res_id"],
+      500
+    );
+    const menuIds = menuData.map((d) => d.res_id);
+    if (!menuIds.length) {
+      return error(res, `No menus found for module "${moduleName}" — is it actually installed on this tenant's Odoo?`, 404);
+    }
+
+    const menus = await odoo.searchRead(
+      "ir.ui.menu",
+      [["id", "in", menuIds]],
+      ["id", "name", "parent_id", "action", "sequence"],
+      500, 0, "sequence asc"
     );
 
-    const byCompany = {};
-    rows.forEach((r) => {
-      const companyId = r.company_id?.[0];
-      const companyName = r.company_id?.[1];
-      if (!companyId) return;
+    const menuIdSet = new Set(menuIds);
+    const byId = {};
+    menus.forEach((m) => { byId[m.id] = { ...m, children: [] }; });
 
-      if (!byCompany[companyId]) {
-        byCompany[companyId] = {
-          id: companyId,
-          outletName: companyName,
-          yesterdaySale: 0,
-          monthSale: 0,
-          avgFoodCostPct: 0,
-          _latestDate: null,
-        };
-      }
-      const bucket = byCompany[companyId];
-
-      bucket.monthSale += Number(r.sales_amount || 0);
-      if (r.entry_date === yesterdayStr) {
-        bucket.yesterdaySale += Number(r.sales_amount || 0);
-      }
-      // food_cost_percentage_mtd is already a cumulative month-to-date
-      // figure maintained by the module itself — take the value from
-      // the most recent entry rather than averaging every row again.
-      if (!bucket._latestDate || r.entry_date > bucket._latestDate) {
-        bucket._latestDate = r.entry_date;
-        bucket.avgFoodCostPct = Number(r.food_cost_percentage_mtd || 0);
+    const roots = [];
+    menus.forEach((m) => {
+      const parentId = m.parent_id?.[0];
+      // A menu is a "root" of this app's tree if it has no parent, OR
+      // its parent lives OUTSIDE this module (e.g. under a shared
+      // top-level app menu) — either way, nothing above it belongs to
+      // this module, so it's where this tenant's tree starts.
+      if (!parentId || !menuIdSet.has(parentId)) {
+        roots.push(byId[m.id]);
+      } else if (byId[parentId]) {
+        byId[parentId].children.push(byId[m.id]);
       }
     });
 
-    const outlets = Object.values(byCompany).map(({ _latestDate, ...rest }) => rest);
-    return success(res, outlets);
+    // Attach the action's model type where present (window action vs
+    // something else), so the frontend knows a leaf is clickable
+    // without a second round trip per item.
+    const actionIds = menus
+      .map((m) => m.action)
+      .filter(Boolean)
+      .map((ref) => {
+        const [model, id] = String(ref).split(",");
+        return { model, id: parseInt(id, 10) };
+      });
+    const windowActionIds = actionIds.filter((a) => a.model === "ir.actions.act_window").map((a) => a.id);
+    let validWindowActionIds = new Set();
+    if (windowActionIds.length) {
+      const valid = await odoo.searchRead("ir.actions.act_window", [["id", "in", windowActionIds]], ["id"], windowActionIds.length);
+      validWindowActionIds = new Set(valid.map((v) => v.id));
+    }
+
+    const annotate = (node) => {
+      let actionId = null;
+      if (node.action) {
+        const [model, id] = String(node.action).split(",");
+        if (model === "ir.actions.act_window" && validWindowActionIds.has(parseInt(id, 10))) {
+          actionId = parseInt(id, 10);
+        }
+      }
+      return {
+        id: node.id,
+        name: node.name,
+        actionId, // null = folder/parent menu, not directly clickable
+        children: node.children.map(annotate),
+      };
+    };
+
+    const tree = roots.map(annotate);
+
+    // Prefer Odoo's own module description over a derived label when available.
+    let moduleLabel = friendlyLabel(moduleName);
+    try {
+      const modRecord = await odoo.searchRead("ir.module.module", [["name", "=", moduleName]], ["shortdesc"], 1);
+      if (modRecord[0]?.shortdesc) moduleLabel = modRecord[0].shortdesc;
+    } catch (e) { /* fall back to friendlyLabel */ }
+
+    return success(res, { moduleLabel, tree });
   } catch (err) {
-    return error(res, `Dashboard aggregation failed: ${err.message}`, 500);
+    return error(res, err.message, err.status || 500);
   }
 };
 
-// GET /api/outlet/companies — the list of outlets (res.company records)
-// to power a company switcher matching Odoo's own single-company view,
-// instead of always combining every outlet together.
+// GET /api/outlet/companies — outlets (res.company), a standard Odoo
+// model shared by every tenant — no per-tenant config needed at all.
 exports.getCompanies = async (req, res) => {
   try {
+    requireModuleName(req);
     const companies = await odoo.searchRead("res.company", [], ["id", "name"], 100, 0, "name asc");
     return success(res, companies);
   } catch (err) {
-    return error(res, `Couldn't load outlets: ${err.message}`, 500);
+    return error(res, `Couldn't load outlets: ${err.message}`, err.status || 500);
   }
 };
 
-// GET /api/outlet/:screenKey?dateFrom=&dateTo=&companyId=&<any extra filters>
+// GET /api/outlet/screen/:actionId?companyId=&dateFrom=&dateTo=
+// Fully generic: resolves the action to its model, discovers that
+// model's real (business, non-system) fields and their labels straight
+// from Odoo, then reads the data — all live, no per-tenant field
+// mapping involved anywhere in this function.
 exports.getScreenData = async (req, res) => {
-  const { screenKey } = req.params;
-  const screen = SCREENS[screenKey];
-
-  if (!screen) {
-    return error(res, `Unknown Outlet Management screen "${screenKey}".`, 404);
-  }
-
-  if (!screen.model) {
-    // Honest "not wired up yet" response rather than a guess — see
-    // config/outletModuleConfig.js for exactly how to fill this in.
-    return error(
-      res,
-      `"${screen.label}" hasn't been connected to Odoo yet — its model name needs to be confirmed via GET /api/admin/debug/action-info first, then set in config/outletModuleConfig.js.`,
-      501
-    );
-  }
-
-  // Only request fields that have actually been confirmed — a screen
-  // can be "half wired up" (model known, some fields still null) and
-  // still return something useful instead of an all-or-nothing failure.
-  const confirmedFields = Object.entries(screen.fields)
-    .filter(([, odooFieldName]) => !!odooFieldName)
-    .reduce((acc, [ourKey, odooFieldName]) => {
-      acc[ourKey] = odooFieldName;
-      return acc;
-    }, {});
-
-  if (Object.keys(confirmedFields).length === 0) {
-    return error(
-      res,
-      `"${screen.label}"'s model is set, but none of its field names have been confirmed yet — see config/outletModuleConfig.js.`,
-      501
-    );
-  }
-
-  // Default to the CURRENT MONTH when this screen has a known "date"
-  // field — matching Odoo's own default "This Month" filter on these
-  // screens, rather than pulling every record ever entered across
-  // every outlet in one unscoped, ever-growing list. Pass explicit
-  // ?dateFrom=&dateTo= to see a different range.
-  const domain = [];
-  if (confirmedFields.date) {
-    const today = new Date();
-    const dateFrom = req.query.dateFrom || new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
-    const dateTo = req.query.dateTo || today.toISOString().slice(0, 10);
-    domain.push([confirmedFields.date, ">=", dateFrom]);
-    domain.push([confirmedFields.date, "<=", dateTo]);
-  }
-  // Scope to a single outlet when requested — matches Odoo's own
-  // company-switcher behavior (one company's data at a time) rather
-  // than always combining every outlet's records together.
-  if (confirmedFields.outlet && req.query.companyId) {
-    domain.push([confirmedFields.outlet, "=", parseInt(req.query.companyId, 10)]);
-  }
-
   try {
-    const odooFieldNames = Object.values(confirmedFields);
-    const rows = await odoo.searchRead(screen.model, domain, odooFieldNames, 500);
+    requireModuleName(req);
+    const actionId = parseInt(req.params.actionId, 10);
+    if (!actionId) return error(res, "A valid action id is required.", 400);
 
-    // Translate Odoo's real field names back to our stable keys, so the
-    // frontend never has to know or care what they're actually called
-    // in Odoo.
-    const reverseMap = Object.entries(confirmedFields).reduce((acc, [ourKey, odooFieldName]) => {
-      acc[odooFieldName] = ourKey;
-      return acc;
-    }, {});
+    const actions = await odoo.searchRead("ir.actions.act_window", [["id", "=", actionId]], ["res_model", "name"], 1);
+    if (!actions.length) return error(res, "That screen's action couldn't be found.", 404);
+    const { res_model: model, name: screenName } = actions[0];
 
-    const translated = rows.map((row) => {
-      const out = { id: row.id };
-      Object.entries(row).forEach(([odooFieldName, value]) => {
-        const ourKey = reverseMap[odooFieldName];
-        if (ourKey) out[ourKey] = value;
-      });
-      return out;
+    const modelFields = await odoo.searchRead(
+      "ir.model.fields",
+      [["model", "=", model]],
+      ["name", "field_description", "ttype", "relation"],
+      300
+    );
+
+    const businessFields = modelFields.filter(
+      (f) => isBusinessField(f.name) && RENDERABLE_TYPES.includes(f.ttype)
+    );
+    if (!businessFields.length) {
+      return error(res, `"${screenName}" has no displayable fields on model "${model}".`, 501);
+    }
+
+    // Try to find a date field and a company/outlet field to apply
+    // sensible default scoping (current month, single outlet) — same
+    // idea as before, but discovered by TYPE/relation instead of a
+    // hardcoded field name, so it works on any model.
+    const dateField = businessFields.find((f) => f.ttype === "date" || f.ttype === "datetime");
+    const companyField = businessFields.find((f) => f.ttype === "many2one" && f.relation === "res.company");
+
+    const domain = [];
+    if (dateField) {
+      const today = new Date();
+      const dateFrom = req.query.dateFrom || new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
+      const dateTo = req.query.dateTo || today.toISOString().slice(0, 10);
+      domain.push([dateField.name, ">=", dateFrom]);
+      domain.push([dateField.name, "<=", dateTo]);
+    }
+    if (companyField && req.query.companyId) {
+      domain.push([companyField.name, "=", parseInt(req.query.companyId, 10)]);
+    }
+
+    const fieldNames = businessFields.map((f) => f.name);
+    const rows = await odoo.searchRead(model, domain, fieldNames, 500, 0, dateField ? `${dateField.name} desc` : "");
+
+    return success(res, {
+      screenName,
+      model,
+      columns: businessFields.map((f) => ({ name: f.name, label: f.field_description, type: f.ttype })),
+      hasDateFilter: !!dateField,
+      hasCompanyFilter: !!companyField,
+      rows,
     });
-
-    return success(res, translated);
   } catch (err) {
-    return error(res, `Odoo read failed for "${screen.label}" (model "${screen.model}"): ${err.message}`, 500);
+    return error(res, `Couldn't load this screen: ${err.message}`, err.status || 500);
   }
 };
 
-exports.isTenantEnabled = (tenantId) => ENABLED_TENANT_IDS.includes(tenantId);
+exports.isTenantEnabled = (tenantId) => !!getModuleName(tenantId);
+exports.getModuleLabel = (tenantId) => {
+  const moduleName = getModuleName(tenantId);
+  return moduleName ? friendlyLabel(moduleName) : "Outlet Management";
+};

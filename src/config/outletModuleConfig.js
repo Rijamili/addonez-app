@@ -1,64 +1,41 @@
 // src/config/outletModuleConfig.js
 //
-// "Outlet Management" is a bespoke, client-specific Odoo module built
-// for the Juicy tenant (multi-outlet restaurant chain) — NOT a standard
-// Odoo app, so there's no public documentation to reason about its
-// model/field names from. Every entry below starts as `null` on
-// purpose: outletController checks for that and returns a clear
-// "not confirmed yet" response instead of guessing a model name that
-// would silently return empty data or a hard 500.
+// Custom-app modules (bespoke, per-client Odoo apps like Juicy's
+// "Outlet Management") work for ANY tenant with ZERO code changes,
+// the same way Sales/Projects/Finance do — the only thing that's
+// actually tenant-specific is WHICH custom module belongs to them.
+// Everything else (menu structure, screens, field names, labels) is
+// discovered live from Odoo's own metadata at request time — see
+// outletController.js's getMenu/getScreen.
 //
-// HOW TO FILL THIS IN:
-//   1. Hit GET /api/admin/debug/action-info?ids=648,633,... (comma-separate
-//      every action id you can find in the URL bar for each Outlet
-//      Management screen in Odoo).
-//   2. That returns each action's real res_model, plus the full field
-//      list for each model.
-//   3. Fill in the `model` and `fields` below for each screen using
-//      that response. Nothing else in the app needs to change — every
-//      screen reads from this one file.
+// HOW TO ONBOARD A NEW COMPANY (the ENTIRE process — nothing else to do):
+//   1. Hit GET /api/admin/debug/custom-modules while logged in as that
+//      tenant's admin — lists every installed module whose author
+//      isn't Odoo, which will include their bespoke app.
+//   2. Copy its technical `name` (e.g. "juicy_outlet_management") into
+//      TENANT_MODULES below, keyed by their tenant id.
+//   3. Deploy. Done — their menu, screens, and fields all render
+//      automatically from there, live.
+const TENANT_MODULES = {
+  juicy: "juicy_outlet_management",
 
-// Bespoke to this one client — gated by tenant id rather than an Odoo
-// "is this app installed" check, since we don't know (and may never
-// need) a generic technical module name for it.
-const ENABLED_TENANT_IDS = ["juicy"];
-
-// Each screen: { model: "real.odoo.model" | null, fields: { ourKey: "real_odoo_field_name" } }
-// `fields` values stay null until confirmed too — outletController only
-// requests fields that are actually filled in, so a partially-confirmed
-// screen still works for whatever IS known.
-const SCREENS = {
-  dashboard: {
-    label: "Admin Panel Dashboard",
-    model: null, // confirm via action id 648
-    fields: {
-      outletName: null,
-      yesterdaySale: null,
-      monthSale: null,
-      avgFoodCostPct: null,
-    },
-  },
-  dailyDataEntry: {
-    label: "Daily Data Entry",
-    model: "juicy.daily.entry",
-    fields: {
-      date: "entry_date",
-      outlet: "company_id",
-      totalSales: "sales_amount",
-      tallyVariance: "collection_variance",
-    },
-  },
-  monthlySettlementEntry: { label: "Monthly Settlement Entry", model: null, fields: {} },
-  partnerProfitDistribution: { label: "Partner Profit Distribution", model: null, fields: {} },
-  branchProfitAndLoss: { label: "Branch P&L Statement", model: null, fields: {} },
-  salesAnalysis: { label: "Sales Analysis", model: null, fields: {} },
-  dailyLedger: { label: "Daily Ledger", model: null, fields: {} },
-  monthlyStatement: { label: "Monthly Statement", model: null, fields: {} },
-  monthlyRoyaltyPL: { label: "Monthly Royalty P&L", model: null, fields: {} },
-  monthlyEmployeeSalary: { label: "Monthly Employee Salary", model: null, fields: {} },
-  salaryAdvances: { label: "Salary Advances", model: null, fields: {} },
-  partnerOutletShareConfig: { label: "Partner Outlet Share Configuration", model: null, fields: {} },
-  expenseCategories: { label: "Expense Categories", model: null, fields: {} },
+  // Add another company here once you know their module's technical
+  // name — no other file needs to change:
+  // acmeoutlets: "acme_branch_manager",
 };
 
-module.exports = { ENABLED_TENANT_IDS, SCREENS };
+function getModuleName(tenantId) {
+  return TENANT_MODULES[tenantId] || null;
+}
+
+// Turns a technical module name into a readable label when Odoo's own
+// shortdesc isn't fetched (cheap fallback — outletController prefers
+// the real ir.module.module.shortdesc when it can look it up).
+function friendlyLabel(moduleName) {
+  return moduleName
+    .split("_")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+module.exports = { TENANT_MODULES, getModuleName, friendlyLabel };
