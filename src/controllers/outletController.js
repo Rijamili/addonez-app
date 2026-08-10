@@ -87,7 +87,7 @@ exports.getDashboard = async (req, res) => {
   }
 };
 
-// GET /api/outlet/:screenKey?<any extra filters>
+// GET /api/outlet/:screenKey?dateFrom=&dateTo=&<any extra filters>
 exports.getScreenData = async (req, res) => {
   const { screenKey } = req.params;
   const screen = SCREENS[screenKey];
@@ -124,9 +124,23 @@ exports.getScreenData = async (req, res) => {
     );
   }
 
+  // Default to the CURRENT MONTH when this screen has a known "date"
+  // field — matching Odoo's own default "This Month" filter on these
+  // screens, rather than pulling every record ever entered across
+  // every outlet in one unscoped, ever-growing list. Pass explicit
+  // ?dateFrom=&dateTo= to see a different range.
+  const domain = [];
+  if (confirmedFields.date) {
+    const today = new Date();
+    const dateFrom = req.query.dateFrom || new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
+    const dateTo = req.query.dateTo || today.toISOString().slice(0, 10);
+    domain.push([confirmedFields.date, ">=", dateFrom]);
+    domain.push([confirmedFields.date, "<=", dateTo]);
+  }
+
   try {
     const odooFieldNames = Object.values(confirmedFields);
-    const rows = await odoo.searchRead(screen.model, [], odooFieldNames, 500);
+    const rows = await odoo.searchRead(screen.model, domain, odooFieldNames, 500);
 
     // Translate Odoo's real field names back to our stable keys, so the
     // frontend never has to know or care what they're actually called
