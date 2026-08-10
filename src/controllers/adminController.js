@@ -390,4 +390,44 @@ const debugActionInfo = async (req, res) => {
   }
 };
 
-module.exports = { createTenant, updateTenant, deleteTenant, addUser, removeUser, listTenants, debugUserFields, debugProductFields, debugModuleSearch, debugActionInfo };
+// FAST PATH — GET /api/admin/debug/model-search?q=daily
+// Searches Odoo's own model registry (ir.model) directly for anything
+// whose technical name or description matches — no action-id lookup
+// needed at all. Much more reliable than chasing action ids through
+// ir.actions.actions when those keep resolving to unrelated built-in
+// Odoo features.
+const debugModelSearch = async (req, res) => {
+  const q = req.query.q || "";
+  if (!q) return error(res, "Pass ?q=daily (or outlet, settlement, etc.)", 400);
+
+  try {
+    const models = await odoo.searchRead(
+      "ir.model",
+      ["|", ["model", "ilike", q], ["name", "ilike", q]],
+      ["model", "name"],
+      50
+    );
+
+    // Immediately pull the field list for every match too, in one call.
+    const fieldsByModel = {};
+    for (const m of models) {
+      try {
+        const fields = await odoo.searchRead(
+          "ir.model.fields",
+          [["model", "=", m.model]],
+          ["name", "field_description", "ttype"],
+          200
+        );
+        fieldsByModel[m.model] = fields;
+      } catch (e) {
+        fieldsByModel[m.model] = { error: e.message };
+      }
+    }
+
+    return success(res, { models, fieldsByModel });
+  } catch (err) {
+    return error(res, "Model search failed: " + err.message, 500);
+  }
+};
+
+module.exports = { createTenant, updateTenant, deleteTenant, addUser, removeUser, listTenants, debugUserFields, debugProductFields, debugModuleSearch, debugActionInfo, debugModelSearch };

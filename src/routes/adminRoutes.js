@@ -2,7 +2,7 @@
 const express  = require("express");
 const router   = express.Router();
 const { body, param } = require("express-validator");
-const { createTenant, updateTenant, deleteTenant, addUser, removeUser, listTenants, debugUserFields, debugProductFields, debugModuleSearch, debugActionInfo } = require("../controllers/adminController");
+const { createTenant, updateTenant, deleteTenant, addUser, removeUser, listTenants, debugUserFields, debugProductFields, debugModuleSearch, debugActionInfo, debugModelSearch } = require("../controllers/adminController");
 const { authenticate, authorize } = require("../middleware/auth");
 const { validate } = require("../middleware/validate");
 const { error } = require("../utils/response");
@@ -101,5 +101,7 @@ router.get("/debug/product-fields", requireSuperAdminOrOwnTenantAdmin, debugProd
 router.get("/debug/module-search", requireSuperAdminOrOwnTenantAdmin, debugModuleSearch);
 
 router.get("/debug/action-info", requireSuperAdminOrOwnTenantAdmin, debugActionInfo);
+
+router.get("/debug/model-search", requireSuperAdminOrOwnTenantAdmin, debugModelSearch);
 
 module.exports = router;
