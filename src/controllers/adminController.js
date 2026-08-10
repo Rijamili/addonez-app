@@ -682,4 +682,43 @@ const debugDatabaseCheck = async (req, res) => {
   return success(res, result);
 };
 
-module.exports = { createTenant, updateTenant, deleteTenant, addUser, removeUser, listTenants, debugUserFields, debugProductFields, debugModuleSearch, debugActionInfo, debugModelSearch, debugMenuSearch, debugCustomModules, debugModuleModels, debugStudioModels, debugCompanyFilterTest, debugDatabaseCheck };
+// TEMPORARY diagnostic — GET /api/admin/debug/model-rules?model=sale.order
+// Reads the ACTUAL ir.rule records Odoo applies to a model, directly —
+// after ruling out company scoping and access-tier as explanations for
+// a silent 0-results mystery, this shows the real restriction logic
+// instead of continuing to guess at it through black-box testing.
+const debugModelRules = async (req, res) => {
+  const model = req.query.model || "sale.order";
+  try {
+    const modelRecord = await odoo.searchRead("ir.model", [["model", "=", model]], ["id"], 1);
+    if (!modelRecord.length) return error(res, `Model "${model}" not found.`, 404);
+
+    const rules = await odoo.searchRead(
+      "ir.rule",
+      [["model_id", "=", modelRecord[0].id]],
+      ["name", "domain_force", "groups", "active", "perm_read", "perm_write", "perm_create", "perm_unlink"],
+      100
+    );
+
+    // Also resolve which groups the current account actually belongs
+    // to among the ones referenced by these rules — tells us directly
+    // whether a restrictive rule applies to THIS account or not.
+    const allGroupIds = [...new Set(rules.flatMap((r) => r.groups || []))];
+    let myGroupMemberships = {};
+    for (const groupId of allGroupIds) {
+      try {
+        const groupRec = await odoo.searchRead("res.groups", [["id", "=", groupId]], ["name", "full_name"], 1);
+        const isMember = await odoo.searchCount("res.groups", [["id", "=", groupId], ["users", "in", [req.user.uid]]]);
+        myGroupMemberships[groupId] = { name: groupRec[0]?.full_name || groupRec[0]?.name, isMember: !!isMember };
+      } catch (e) {
+        myGroupMemberships[groupId] = { error: e.message };
+      }
+    }
+
+    return success(res, { model, rules, myGroupMemberships });
+  } catch (err) {
+    return error(res, `Rule lookup failed: ${err.message}`, 500);
+  }
+};
+
+module.exports = { createTenant, updateTenant, deleteTenant, addUser, removeUser, listTenants, debugUserFields, debugProductFields, debugModuleSearch, debugActionInfo, debugModelSearch, debugMenuSearch, debugCustomModules, debugModuleModels, debugStudioModels, debugCompanyFilterTest, debugDatabaseCheck, debugModelRules };
