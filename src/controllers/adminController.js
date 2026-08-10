@@ -562,4 +562,59 @@ const debugModuleModels = async (req, res) => {
   }
 };
 
-module.exports = { createTenant, updateTenant, deleteTenant, addUser, removeUser, listTenants, debugUserFields, debugProductFields, debugModuleSearch, debugActionInfo, debugModelSearch, debugMenuSearch, debugCustomModules, debugModuleModels };
+// STUDIO CHECK — GET /api/admin/debug/studio-models
+// Odoo Studio-built apps don't appear as a distinct module with a
+// custom author (they bundle into a generic "studio_customization"
+// module) — but every model Studio creates is always prefixed "x_",
+// so this finds them directly regardless of module metadata.
+const debugStudioModels = async (req, res) => {
+  try {
+    const allModels = await odoo.searchRead("ir.model", [], ["id", "model", "name"], 5000);
+    const studioModels = allModels.filter((m) => m.model.startsWith("x_"));
+
+    const fieldsByModel = {};
+    for (const m of studioModels) {
+      try {
+        const fields = await odoo.searchRead(
+          "ir.model.fields",
+          [["model", "=", m.model]],
+          ["name", "field_description", "ttype"],
+          200
+        );
+        fieldsByModel[m.model] = fields;
+      } catch (e) {
+        fieldsByModel[m.model] = { error: e.message };
+      }
+    }
+
+    return success(res, { studioModels, fieldsByModel });
+  } catch (err) {
+    return error(res, "Studio model search failed: " + err.message, 500);
+  }
+};
+
+// TEMPORARY diagnostic — GET /api/admin/debug/company-filter-test
+// Compares sale.order visibility WITH vs WITHOUT the allowed_company_ids
+// context restriction that OdooService.execute applies on every call.
+// If "withoutCompanyFilter" finds real orders but "withCompanyFilter"
+// doesn't, that context key isn't working the way we assumed for this
+// tenant/account, and we need a different multi-company mechanism.
+const debugCompanyFilterTest = async (req, res) => {
+  try {
+    const withCompanyFilter = await odoo.searchCount("sale.order", []);
+    const withoutCompanyFilter = await requestContext.run(
+      req.tenant,
+      () => odoo.searchCount("sale.order", []),
+      { companyIds: null }
+    );
+    return success(res, {
+      companyIdsInEffect: req.user.companyIds,
+      withCompanyFilter,
+      withoutCompanyFilter,
+    });
+  } catch (err) {
+    return error(res, "Comparison failed: " + err.message, 500);
+  }
+};
+
+module.exports = { createTenant, updateTenant, deleteTenant, addUser, removeUser, listTenants, debugUserFields, debugProductFields, debugModuleSearch, debugActionInfo, debugModelSearch, debugMenuSearch, debugCustomModules, debugModuleModels, debugStudioModels, debugCompanyFilterTest };
