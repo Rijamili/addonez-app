@@ -134,6 +134,147 @@ exports.getMenu = async (req, res) => {
   }
 };
 
+// GET /api/outlet/dashboard
+// Auto-builds a per-outlet KPI dashboard WITHOUT any hardcoded field
+// names: scans this module's own screens for one whose model has both
+// a date field and an outlet (many2one → res.company) field — that's
+// treated as the "daily activity" data source. Every monetary field on
+// that model becomes a Yesterday/This-Month total; every float field
+// whose label looks like a percentage (contains "%"/"percent"/"pct")
+// becomes a latest-value metric. This is a heuristic, not a guarantee —
+// it works well for the common "daily entry per outlet" shape these
+// custom apps tend to have, but a module with a very different data
+// shape may not produce a meaningful dashboard this way.
+exports.getDashboard = async (req, res) => {
+  try {
+    const moduleName = requireModuleName(req);
+
+    const menuData = await odoo.searchRead(
+      "ir.model.data",
+      [["module", "=", moduleName], ["model", "=", "ir.ui.menu"]],
+      ["res_id"],
+      500
+    );
+    const menuIds = menuData.map((d) => d.res_id);
+    if (!menuIds.length) return error(res, "No menus found for this module.", 404);
+
+    const menus = await odoo.searchRead("ir.ui.menu", [["id", "in", menuIds]], ["action"], 500);
+    const windowActionIds = menus
+      .map((m) => m.action)
+      .filter(Boolean)
+      .map((ref) => String(ref).split(","))
+      .filter(([model]) => model === "ir.actions.act_window")
+      .map(([, id]) => parseInt(id, 10));
+
+    if (!windowActionIds.length) return error(res, "No usable data screens found for this module.", 404);
+
+    const actions = await odoo.searchRead(
+      "ir.actions.act_window",
+      [["id", "in", [...new Set(windowActionIds)]]],
+      ["res_model"],
+      windowActionIds.length
+    );
+    const distinctModels = [...new Set(actions.map((a) => a.res_model))];
+
+    // Find the first model with both a date field and an outlet field.
+    let sourceModel = null;
+    let dateField = null;
+    let companyField = null;
+    let allFields = null;
+    for (const model of distinctModels) {
+      const fields = await odoo.searchRead(
+        "ir.model.fields",
+        [["model", "=", model]],
+        ["name", "field_description", "ttype", "relation"],
+        300
+      );
+      const business = fields.filter((f) => isBusinessField(f.name));
+      const foundDate = business.find((f) => f.ttype === "date" || f.ttype === "datetime");
+      const foundCompany = business.find((f) => f.ttype === "many2one" && f.relation === "res.company");
+      if (foundDate && foundCompany) {
+        sourceModel = model;
+        dateField = foundDate;
+        companyField = foundCompany;
+        allFields = business;
+        break;
+      }
+    }
+
+    if (!sourceModel) {
+      return error(res, "No screen with both a date field and an outlet field was found to build a dashboard from.", 404);
+    }
+
+    const monetaryFields = allFields.filter((f) => f.ttype === "monetary");
+    const percentFields = allFields.filter(
+      (f) => f.ttype === "float" && /%|percent|pct/i.test(f.field_description)
+    );
+
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toISOString().slice(0, 10);
+    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
+
+    const readFields = [dateField.name, companyField.name, ...monetaryFields.map((f) => f.name), ...percentFields.map((f) => f.name)];
+    const rows = await odoo.searchRead(
+      sourceModel,
+      [[dateField.name, ">=", monthStart]],
+      readFields,
+      5000, 0, `${dateField.name} desc`
+    );
+
+    const byCompany = {};
+    rows.forEach((r) => {
+      const companyId = r[companyField.name]?.[0];
+      const companyName = r[companyField.name]?.[1];
+      if (!companyId) return;
+
+      if (!byCompany[companyId]) {
+        byCompany[companyId] = { id: companyId, outletName: companyName, metrics: [], _latestDate: null, _raw: {} };
+        monetaryFields.forEach((f) => { byCompany[companyId]._raw[f.name] = { yesterday: 0, month: 0 }; });
+        percentFields.forEach((f) => { byCompany[companyId]._raw[f.name] = { value: 0 }; });
+      }
+      const bucket = byCompany[companyId];
+
+      monetaryFields.forEach((f) => {
+        bucket._raw[f.name].month += Number(r[f.name] || 0);
+        if (r[dateField.name] === yesterdayStr) {
+          bucket._raw[f.name].yesterday += Number(r[f.name] || 0);
+        }
+      });
+
+      if (!bucket._latestDate || r[dateField.name] > bucket._latestDate) {
+        bucket._latestDate = r[dateField.name];
+        percentFields.forEach((f) => { bucket._raw[f.name].value = Number(r[f.name] || 0); });
+      }
+    });
+
+    const outlets = Object.values(byCompany).map((bucket) => {
+      const metrics = [];
+      monetaryFields.forEach((f) => {
+        metrics.push({
+          label: f.field_description,
+          type: "monetary",
+          yesterday: Math.round(bucket._raw[f.name].yesterday * 100) / 100,
+          month: Math.round(bucket._raw[f.name].month * 100) / 100,
+        });
+      });
+      percentFields.forEach((f) => {
+        metrics.push({
+          label: f.field_description,
+          type: "percent",
+          value: Math.round(bucket._raw[f.name].value * 100) / 100,
+        });
+      });
+      return { id: bucket.id, outletName: bucket.outletName, metrics };
+    });
+
+    return success(res, { sourceModel, outlets });
+  } catch (err) {
+    return error(res, `Dashboard build failed: ${err.message}`, err.status || 500);
+  }
+};
+
 // GET /api/outlet/companies — outlets (res.company), a standard Odoo
 // model shared by every tenant — no per-tenant config needed at all.
 exports.getCompanies = async (req, res) => {

@@ -15,6 +15,7 @@ router.use(authenticate, (req, res, next) => {
 });
 
 router.get("/menu", outletController.getMenu);
+router.get("/dashboard", outletController.getDashboard);
 router.get("/companies", outletController.getCompanies);
 router.get("/screen/:actionId", outletController.getScreenData);
 
