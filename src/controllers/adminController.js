@@ -607,10 +607,26 @@ const debugCompanyFilterTest = async (req, res) => {
       () => odoo.searchCount("sale.order", []),
       { companyIds: null }
     );
+    // Third test: maybe Odoo's record rule behaves differently when
+    // given ALL 15 allowed companies at once vs just the account's own
+    // single default company — worth ruling in or out directly.
+    const ownUser = await odoo.searchRead("res.users", [["id", "=", req.user.uid]], ["company_id"], 1);
+    const defaultCompanyId = ownUser[0]?.company_id?.[0] || null;
+    let withSingleDefaultCompany = null;
+    if (defaultCompanyId) {
+      withSingleDefaultCompany = await requestContext.run(
+        req.tenant,
+        () => odoo.searchCount("sale.order", []),
+        { companyIds: [defaultCompanyId] }
+      );
+    }
+
     return success(res, {
       companyIdsInEffect: req.user.companyIds,
+      defaultCompanyId,
       withCompanyFilter,
       withoutCompanyFilter,
+      withSingleDefaultCompany,
     });
   } catch (err) {
     return error(res, "Comparison failed: " + err.message, 500);
