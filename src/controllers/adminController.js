@@ -295,4 +295,48 @@ const debugModuleSearch = async (req, res) => {
   }
 };
 
-module.exports = { createTenant, updateTenant, deleteTenant, addUser, removeUser, listTenants, debugUserFields, debugProductFields, debugModuleSearch };
+// TEMPORARY diagnostic — GET /api/admin/debug/action-info?ids=648,633
+// Odoo's URL bar shows the numeric action id (e.g. ".../action-648") for
+// whatever screen is open. This resolves that id to the actual
+// ir.actions.act_window record — its res_model tells us exactly which
+// Odoo model backs that screen. Needed for bespoke/custom modules (like
+// a client-specific "Outlet Management" app) where there's no public
+// documentation to reason from, unlike standard Odoo apps.
+const debugActionInfo = async (req, res) => {
+  const idsParam = req.query.ids || "";
+  const ids = idsParam.split(",").map((s) => parseInt(s.trim(), 10)).filter(Boolean);
+  if (!ids.length) return error(res, "Pass ?ids=648,633 (comma-separated action ids from the URL bar).", 400);
+
+  try {
+    const actions = await odoo.searchRead(
+      "ir.actions.act_window",
+      [["id", "in", ids]],
+      ["id", "name", "res_model", "view_mode", "domain", "context"],
+      ids.length
+    );
+
+    // Also pull the actual field list for each distinct model found, so
+    // we know what data is available without a second round trip.
+    const modelNames = [...new Set(actions.map((a) => a.res_model).filter(Boolean))];
+    const fieldsByModel = {};
+    for (const model of modelNames) {
+      try {
+        const fields = await odoo.searchRead(
+          "ir.model.fields",
+          [["model", "=", model]],
+          ["name", "field_description", "ttype"],
+          200
+        );
+        fieldsByModel[model] = fields;
+      } catch (e) {
+        fieldsByModel[model] = { error: e.message };
+      }
+    }
+
+    return success(res, { actions, fieldsByModel });
+  } catch (err) {
+    return error(res, "Action lookup failed: " + err.message, 500);
+  }
+};
+
+module.exports = { createTenant, updateTenant, deleteTenant, addUser, removeUser, listTenants, debugUserFields, debugProductFields, debugModuleSearch, debugActionInfo };
