@@ -87,7 +87,19 @@ exports.getDashboard = async (req, res) => {
   }
 };
 
-// GET /api/outlet/:screenKey?dateFrom=&dateTo=&<any extra filters>
+// GET /api/outlet/companies — the list of outlets (res.company records)
+// to power a company switcher matching Odoo's own single-company view,
+// instead of always combining every outlet together.
+exports.getCompanies = async (req, res) => {
+  try {
+    const companies = await odoo.searchRead("res.company", [], ["id", "name"], 100, 0, "name asc");
+    return success(res, companies);
+  } catch (err) {
+    return error(res, `Couldn't load outlets: ${err.message}`, 500);
+  }
+};
+
+// GET /api/outlet/:screenKey?dateFrom=&dateTo=&companyId=&<any extra filters>
 exports.getScreenData = async (req, res) => {
   const { screenKey } = req.params;
   const screen = SCREENS[screenKey];
@@ -136,6 +148,12 @@ exports.getScreenData = async (req, res) => {
     const dateTo = req.query.dateTo || today.toISOString().slice(0, 10);
     domain.push([confirmedFields.date, ">=", dateFrom]);
     domain.push([confirmedFields.date, "<=", dateTo]);
+  }
+  // Scope to a single outlet when requested — matches Odoo's own
+  // company-switcher behavior (one company's data at a time) rather
+  // than always combining every outlet's records together.
+  if (confirmedFields.outlet && req.query.companyId) {
+    domain.push([confirmedFields.outlet, "=", parseInt(req.query.companyId, 10)]);
   }
 
   try {
