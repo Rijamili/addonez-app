@@ -40,12 +40,12 @@ const SCREENS = {
   },
   dailyDataEntry: {
     label: "Daily Data Entry",
-    model: null, // confirm via action id 633
+    model: "juicy.daily.entry",
     fields: {
-      date: null,
-      outlet: null,
-      totalSales: null,
-      tallyVariance: null,
+      date: "entry_date",
+      outlet: "company_id",
+      totalSales: null, // still need this — not yet identified
+      tallyVariance: "collection_variance",
     },
   },
   monthlySettlementEntry: { label: "Monthly Settlement Entry", model: null, fields: {} },
