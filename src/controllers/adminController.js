@@ -370,6 +370,12 @@ const debugActionInfo = async (req, res) => {
     }
 
     return success(res, {
+      // The raw base-table info for every id you asked about — its real
+      // name and its actual action `type`. This is what tells you
+      // whether an id is a normal window action, a custom client
+      // action, or something else (server action, report, etc.) that
+      // this diagnostic doesn't have specialized handling for yet.
+      baseActions,
       // Sanity-check this against what you expected — if an id's `name`
       // here doesn't match the screen you were actually looking at, the
       // id you copied from the URL doesn't match this id space the way
