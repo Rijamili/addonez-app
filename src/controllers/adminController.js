@@ -494,4 +494,72 @@ const debugMenuSearch = async (req, res) => {
   }
 };
 
-module.exports = { createTenant, updateTenant, deleteTenant, addUser, removeUser, listTenants, debugUserFields, debugProductFields, debugModuleSearch, debugActionInfo, debugModelSearch, debugMenuSearch };
+// MOST RELIABLE PATH — GET /api/admin/debug/custom-modules
+// Lists every installed module whose author ISN'T Odoo itself — a
+// bespoke/custom module like "Outlet Management" always has a distinct
+// vendor, so this finds it directly without any keyword-matching risk
+// (menu names, model names, and action ids have all proven unreliable
+// so far on this instance for reasons that aren't fully clear remotely
+// — possibly multi-company visibility rules or translations).
+const debugCustomModules = async (req, res) => {
+  try {
+    const modules = await odoo.searchRead(
+      "ir.module.module",
+      [
+        ["state", "=", "installed"],
+        "!", ["author", "ilike", "Odoo"],
+      ],
+      ["name", "shortdesc", "author", "state"],
+      100
+    );
+    return success(res, modules);
+  } catch (err) {
+    return error(res, "Custom module search failed: " + err.message, 500);
+  }
+};
+
+// FOLLOW-UP — GET /api/admin/debug/module-models?module=<technical_name>
+// Once you have a module's real technical name (from debugCustomModules
+// above), this lists EVERY model that module actually defines, via
+// ir.model.data — the definitive record of what a module ships,
+// independent of menu labels or action ids entirely.
+const debugModuleModels = async (req, res) => {
+  const moduleName = req.query.module;
+  if (!moduleName) return error(res, "Pass ?module=<technical_name> from debugCustomModules first.", 400);
+
+  try {
+    const modelData = await odoo.searchRead(
+      "ir.model.data",
+      [["module", "=", moduleName], ["model", "=", "ir.model"]],
+      ["name", "res_id"],
+      200
+    );
+
+    const modelIds = modelData.map((d) => d.res_id);
+    let models = [];
+    if (modelIds.length) {
+      models = await odoo.searchRead("ir.model", [["id", "in", modelIds]], ["id", "model", "name"], modelIds.length);
+    }
+
+    const fieldsByModel = {};
+    for (const m of models) {
+      try {
+        const fields = await odoo.searchRead(
+          "ir.model.fields",
+          [["model", "=", m.model]],
+          ["name", "field_description", "ttype"],
+          200
+        );
+        fieldsByModel[m.model] = fields;
+      } catch (e) {
+        fieldsByModel[m.model] = { error: e.message };
+      }
+    }
+
+    return success(res, { models, fieldsByModel });
+  } catch (err) {
+    return error(res, "Module model lookup failed: " + err.message, 500);
+  }
+};
+
+module.exports = { createTenant, updateTenant, deleteTenant, addUser, removeUser, listTenants, debugUserFields, debugProductFields, debugModuleSearch, debugActionInfo, debugModelSearch, debugMenuSearch, debugCustomModules, debugModuleModels };
