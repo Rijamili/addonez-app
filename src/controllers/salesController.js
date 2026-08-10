@@ -43,7 +43,24 @@ exports.getSales = async (req, res) => {
 
     const totalSales = allOrders.reduce((s, o) => s + Number(o.amount_total || 0), 0);
 
-    return success(res, { orders, totalSales, totalCount: allOrders.length });
+    return success(res, {
+      orders,
+      totalSales,
+      totalCount: allOrders.length,
+      // TEMPORARY diagnostic — remove once confirmed. If "scope" says
+      // "personal" here, this account's attendanceRole resolved to
+      // "employee", which forces the domain above to
+      // ["user_id.id","=",uid] — only orders where THIS account is the
+      // assigned salesperson, which would explain a 0 count even
+      // though the company has real orders.
+      _debug: {
+        scope: require("../config/dataScope").isOwnDataOnly(req) ? "personal" : "company",
+        attendanceRole: req.user.attendanceRole,
+        uid: req.user.uid,
+        companyIds: req.user.companyIds,
+        domain,
+      },
+    });
   } catch (err) {
     // A fresh tenant whose Odoo doesn't have the Sales app installed
     // yet will fail here with "Object sale.order doesn't exist" — the
