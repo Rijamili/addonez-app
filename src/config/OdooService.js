@@ -43,6 +43,21 @@ console.log("Database:", odooConfig.db);
     return { key, clients: this._clientsByTenant.get(key), odooConfig };
   }
 
+  async listDatabases() {
+    const { clients } = await this._getClients();
+    return new Promise((resolve, reject) => {
+      clients.common.methodCall("list", [], (err, dbs) => {
+        if (err) return reject(new Error("db.list() failed (often disabled on production Odoo): " + err.message));
+        resolve(dbs);
+      });
+    });
+  }
+
+  async getConfiguredDb() {
+    const { odooConfig } = await this._resolveActiveConfig();
+    return odooConfig.db;
+  }
+
   async getAdminUid() {
     const { key, clients, odooConfig } = await this._getClients();
     const cached = this._adminAuthByTenant.get(key);
@@ -87,53 +102,22 @@ console.log("Database:", odooConfig.db);
     // THIS specific logged-in user is actually allowed to see, via
     // `allowed_company_ids` in the call's context. Odoo's own record rules
     // then filter every query as if we'd logged in as that real user.
-//     const companyIds = requestContext.getCompanyIds();
-//     console.log("========== ODOO REQUEST ==========");
-// console.log("Model:", model);
-// console.log("Method:", method);
-// console.log("Admin UID:", uid);
-// console.log("Company IDs:", companyIds);
-// console.log("Args:", JSON.stringify(args));
-// console.log("==================================");
-//     const finalKwargs = companyIds?.length
-//       ? {
-//           ...kwargs,
-//           context: { ...(kwargs.context || {}), allowed_company_ids: companyIds },
-//         }
-//       : kwargs;
-const companyIds = requestContext.getCompanyIds();
-
-const finalKwargs = {
-  ...kwargs,
-  context: {
-    ...(kwargs.context || {}),
-    allowed_company_ids: companyIds,
-  },
-};
+    const companyIds = requestContext.getCompanyIds();
+    const finalKwargs = companyIds?.length
+      ? {
+          ...kwargs,
+          context: { ...(kwargs.context || {}), allowed_company_ids: companyIds },
+        }
+      : kwargs;
 
     return new Promise((resolve, reject) => {
-      clients.models.methodCall(
-  "execute_kw",
-  [db, uid, password, model, method, args, finalKwargs],
-  (err, result) => {
-    if (err) {
-      console.error("========== XML-RPC ERROR ==========");
-      console.error("Model :", model);
-      console.error("Method:", method);
-      console.error("Args  :", JSON.stringify(args, null, 2));
-      console.error("Error :", err);
-      console.error("===================================");
-
-      if (err.message?.includes("AccessDenied")) {
-        this._adminAuthByTenant.delete(key);
-      }
-
-      return reject(new Error(`[${model}.${method}]: ${err.message}`));
-    }
-
-    resolve(result);
-  }
-);
+      clients.models.methodCall("execute_kw", [db, uid, password, model, method, args, finalKwargs], (err, result) => {
+        if (err) {
+          if (err.message?.includes("AccessDenied")) this._adminAuthByTenant.delete(key);
+          return reject(new Error(`[${model}.${method}]: ${err.message}`));
+        }
+        resolve(result);
+      });
     });
   }
 

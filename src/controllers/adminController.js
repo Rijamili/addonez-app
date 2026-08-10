@@ -617,4 +617,53 @@ const debugCompanyFilterTest = async (req, res) => {
   }
 };
 
-module.exports = { createTenant, updateTenant, deleteTenant, addUser, removeUser, listTenants, debugUserFields, debugProductFields, debugModuleSearch, debugActionInfo, debugModelSearch, debugMenuSearch, debugCustomModules, debugModuleModels, debugStudioModels, debugCompanyFilterTest };
+// TEMPORARY diagnostic — GET /api/admin/debug/database-check
+// If sale.order search_count returns 0 via API but real orders are
+// visible in the browser for the SAME account, one strong possibility
+// is that our tenant config's database name doesn't match whichever
+// database the browser session actually landed on. This lists every
+// database Odoo's common endpoint knows about (if db.list() isn't
+// disabled) alongside our configured one, plus a sanity check against
+// a record we KNOW should exist if we're on the right database: the
+// currently authenticated user's own res.users record.
+const debugDatabaseCheck = async (req, res) => {
+  const result = { configuredDb: null, availableDatabases: null, ownUserRecordFound: null };
+
+  try {
+    result.configuredDb = await odoo.getConfiguredDb();
+  } catch (err) {
+    result.configuredDb = { error: err.message };
+  }
+
+  try {
+    result.availableDatabases = await odoo.listDatabases();
+  } catch (err) {
+    result.availableDatabases = { error: err.message };
+  }
+
+  try {
+    // If we're on the right database, this MUST find something — it's
+    // literally the account making this very request.
+    const ownUser = await odoo.searchRead("res.users", [["id", "=", req.user.uid]], ["id", "name", "login"], 1);
+    result.ownUserRecordFound = ownUser[0] || null;
+  } catch (err) {
+    result.ownUserRecordFound = { error: err.message };
+  }
+
+  try {
+    // Two independent sanity checks: res.partner (contacts) almost
+    // certainly has MANY records on any real database, so if this is
+    // also 0, we're not on a "sale.order is specially restricted"
+    // situation — we're on an empty/wrong database entirely. The
+    // sale.order recount here is just for a clean side-by-side compare
+    // in one response.
+    result.totalContacts = await odoo.searchCount("res.partner", []);
+    result.totalSaleOrders = await odoo.searchCount("sale.order", []);
+  } catch (err) {
+    result.sanityCheckError = err.message;
+  }
+
+  return success(res, result);
+};
+
+module.exports = { createTenant, updateTenant, deleteTenant, addUser, removeUser, listTenants, debugUserFields, debugProductFields, debugModuleSearch, debugActionInfo, debugModelSearch, debugMenuSearch, debugCustomModules, debugModuleModels, debugStudioModels, debugCompanyFilterTest, debugDatabaseCheck };
