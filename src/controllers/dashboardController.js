@@ -7,10 +7,22 @@ exports.getDashboard = async (req, res) => {
     const { uid } = req.user;
     const ownScope = isOwnDataOnly(req);
     // TEMPORARY DEBUG TEST
+
+const testCompanies = await odoo.searchRead(
+  "res.company",
+  [],
+  ["id", "name"],
+  100
+);
+
+console.log("========== COMPANY TEST ==========");
+console.log(JSON.stringify(testCompanies, null, 2));
+console.log("==================================");
+
 const testOrders = await odoo.searchRead(
   "sale.order",
   [],
-  ["id", "name", "state", "amount_total", "company_id"],
+  ["id", "name", "state", "amount_total", "company_id", "user_id"],
   10
 );
 
