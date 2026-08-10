@@ -16,6 +16,7 @@ router.use(authenticate, (req, res, next) => {
 });
 
 router.get("/screens", outletController.getScreens);
+router.get("/dashboard", outletController.getDashboard);
 router.get("/:screenKey", outletController.getScreenData);
 
 module.exports = router;

@@ -15,6 +15,78 @@ exports.getScreens = async (req, res) => {
   return success(res, screens);
 };
 
+// GET /api/outlet/dashboard
+// Purpose-built handler (not the generic getScreenData passthrough) —
+// the real Dashboard shows aggregated numbers per outlet (Yesterday
+// Sale, This Month Sale, Monthly Avg Food Cost %), not raw rows, so it
+// needs actual grouping logic. Built on the SAME confirmed model as
+// Daily Data Entry (juicy.daily.entry) rather than chasing down the
+// dashboard's own action id, since every number it needs is already
+// available there.
+exports.getDashboard = async (req, res) => {
+  const screen = SCREENS.dailyDataEntry;
+  if (!screen.model) {
+    return error(
+      res,
+      "Dashboard needs Daily Data Entry's model confirmed first (they share the same underlying data) — see config/outletModuleConfig.js.",
+      501
+    );
+  }
+
+  try {
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toISOString().slice(0, 10);
+    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
+
+    const rows = await odoo.searchRead(
+      screen.model,
+      [["entry_date", ">=", monthStart]],
+      ["entry_date", "company_id", "sales_amount", "food_cost_percentage_mtd"],
+      2000,
+      0,
+      "entry_date desc"
+    );
+
+    const byCompany = {};
+    rows.forEach((r) => {
+      const companyId = r.company_id?.[0];
+      const companyName = r.company_id?.[1];
+      if (!companyId) return;
+
+      if (!byCompany[companyId]) {
+        byCompany[companyId] = {
+          id: companyId,
+          outletName: companyName,
+          yesterdaySale: 0,
+          monthSale: 0,
+          avgFoodCostPct: 0,
+          _latestDate: null,
+        };
+      }
+      const bucket = byCompany[companyId];
+
+      bucket.monthSale += Number(r.sales_amount || 0);
+      if (r.entry_date === yesterdayStr) {
+        bucket.yesterdaySale += Number(r.sales_amount || 0);
+      }
+      // food_cost_percentage_mtd is already a cumulative month-to-date
+      // figure maintained by the module itself — take the value from
+      // the most recent entry rather than averaging every row again.
+      if (!bucket._latestDate || r.entry_date > bucket._latestDate) {
+        bucket._latestDate = r.entry_date;
+        bucket.avgFoodCostPct = Number(r.food_cost_percentage_mtd || 0);
+      }
+    });
+
+    const outlets = Object.values(byCompany).map(({ _latestDate, ...rest }) => rest);
+    return success(res, outlets);
+  } catch (err) {
+    return error(res, `Dashboard aggregation failed: ${err.message}`, 500);
+  }
+};
+
 // GET /api/outlet/:screenKey?<any extra filters>
 exports.getScreenData = async (req, res) => {
   const { screenKey } = req.params;

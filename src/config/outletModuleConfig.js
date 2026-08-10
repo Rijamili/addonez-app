@@ -44,7 +44,7 @@ const SCREENS = {
     fields: {
       date: "entry_date",
       outlet: "company_id",
-      totalSales: null, // still need this — not yet identified
+      totalSales: "sales_amount",
       tallyVariance: "collection_variance",
     },
   },
