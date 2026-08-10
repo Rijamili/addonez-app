@@ -308,16 +308,52 @@ const debugActionInfo = async (req, res) => {
   if (!ids.length) return error(res, "Pass ?ids=648,633 (comma-separated action ids from the URL bar).", 400);
 
   try {
-    const actions = await odoo.searchRead(
-      "ir.actions.act_window",
+    // ir.actions.actions is the polymorphic base table EVERY action type
+    // inherits from (window actions, client actions, server actions,
+    // reports...) and shares the same id space with. Checking this
+    // FIRST — rather than assuming ir.actions.act_window — is what lets
+    // this diagnostic find a custom/bespoke screen (a client action,
+    // which has no res_model at all) instead of silently missing it.
+    const baseActions = await odoo.searchRead(
+      "ir.actions.actions",
       [["id", "in", ids]],
-      ["id", "name", "res_model", "view_mode", "domain", "context"],
+      ["id", "name", "type"],
       ids.length
     );
 
-    // Also pull the actual field list for each distinct model found, so
+    const windowActionIds = baseActions.filter((a) => a.type === "ir.actions.act_window").map((a) => a.id);
+    const clientActionIds = baseActions.filter((a) => a.type === "ir.actions.client").map((a) => a.id);
+
+    let windowDetails = [];
+    if (windowActionIds.length) {
+      windowDetails = await odoo.searchRead(
+        "ir.actions.act_window",
+        [["id", "in", windowActionIds]],
+        ["id", "name", "res_model", "view_mode", "domain"],
+        windowActionIds.length
+      );
+    }
+
+    let clientDetails = [];
+    if (clientActionIds.length) {
+      // Client actions are custom JS/OWL screens (like a bespoke
+      // dashboard) — they have a "tag" identifying the frontend
+      // component, and often NO res_model at all, since they render
+      // their own UI rather than a standard list/form view.
+      clientDetails = await odoo.searchRead(
+        "ir.actions.client",
+        [["id", "in", clientActionIds]],
+        ["id", "name", "tag", "params"],
+        clientActionIds.length
+      );
+    }
+
+    const foundIds = new Set(baseActions.map((a) => a.id));
+    const notFound = ids.filter((id) => !foundIds.has(id));
+
+    // Pull the field list for every distinct model actually found, so
     // we know what data is available without a second round trip.
-    const modelNames = [...new Set(actions.map((a) => a.res_model).filter(Boolean))];
+    const modelNames = [...new Set(windowDetails.map((a) => a.res_model).filter(Boolean))];
     const fieldsByModel = {};
     for (const model of modelNames) {
       try {
@@ -333,7 +369,16 @@ const debugActionInfo = async (req, res) => {
       }
     }
 
-    return success(res, { actions, fieldsByModel });
+    return success(res, {
+      // Sanity-check this against what you expected — if an id's `name`
+      // here doesn't match the screen you were actually looking at, the
+      // id you copied from the URL doesn't match this id space the way
+      // we assumed, and needs re-checking rather than trusting res_model blindly.
+      windowActions: windowDetails,
+      clientActions: clientDetails,
+      notFound, // any ids that matched NEITHER type, or don't exist at all
+      fieldsByModel,
+    });
   } catch (err) {
     return error(res, "Action lookup failed: " + err.message, 500);
   }
