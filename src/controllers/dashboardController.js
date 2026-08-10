@@ -6,6 +6,17 @@ exports.getDashboard = async (req, res) => {
   try {
     const { uid } = req.user;
     const ownScope = isOwnDataOnly(req);
+    // TEMPORARY DEBUG TEST
+const testOrders = await odoo.searchRead(
+  "sale.order",
+  [],
+  ["id", "name", "state", "amount_total", "company_id"],
+  10
+);
+
+console.log("========== SALE ORDER TEST ==========");
+console.log(JSON.stringify(testOrders, null, 2));
+console.log("=====================================");
 
     // Revenue must reflect posted invoices only — not draft sale orders.
     // Filtering on state = "posted" also means a later cancellation
@@ -76,7 +87,11 @@ safe(odoo.searchCount("project.task", taskDomain), 0, "tasks"),
 
     const projects = ownScope
       ? new Set((myTasksForProjects || []).map((t) => t.project_id?.[0]).filter(Boolean)).size
-      : await safe(odoo.searchCount("project.project", projectDomain), 0);
+      : await safe(
+    odoo.searchCount("project.project", projectDomain),
+    0,
+    "projects"
+  );
 
     const totalRevenue = postedInvoices.reduce((s, o) => s + (o.amount_total || 0), 0);
 
