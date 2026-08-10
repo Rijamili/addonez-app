@@ -26,20 +26,52 @@ exports.getDashboard = async (req, res) => {
     // Projects/Tasks, not take down Revenue/Orders/Invoices too. Same
     // logic applies if Sales or Accounting isn't installed either —
     // this dashboard should show whatever IS available.
-    const safe = (promise, fallback) => promise.catch((err) => {
-      console.warn("dashboard: metric failed, degrading to fallback:", err.message);
-      return fallback;
-    });
+    // const safe = (promise, fallback) => promise.catch((err) => {
+    //   console.warn("dashboard: metric failed, degrading to fallback:", err.message);
+    //   return fallback;
+    // });
+
+    const safe = (promise, fallback, metric) => promise.catch((err) => {
+  console.error(`❌ DASHBOARD METRIC FAILED: ${metric}`);
+  console.error("Error:", err.message);
+  return fallback;
+});
 
     const [orders, quotations, postedInvoices, invoices, myTasksForProjects, tasks] = await Promise.all([
-      safe(odoo.searchCount("sale.order", orderDomain), 0),
-      safe(odoo.searchCount("sale.order", quoteDomain), 0),
-      // Explicit limit — searchRead defaults to 80 records, which would
-      // silently under-count revenue once there are more posted invoices than that.
-      safe(odoo.searchRead("account.move", invoiceDomain, ["amount_total"], 10000), []),
-      safe(odoo.searchCount("account.move", invoiceDomain), 0),
-      ownScope ? safe(odoo.searchRead("project.task", [["user_ids", "in", [uid]]], ["project_id"], 2000), []) : Promise.resolve(null),
-      safe(odoo.searchCount("project.task", taskDomain), 0),
+      // safe(odoo.searchCount("sale.order", orderDomain), 0),
+      // safe(odoo.searchCount("sale.order", quoteDomain), 0),
+      // // Explicit limit — searchRead defaults to 80 records, which would
+      // // silently under-count revenue once there are more posted invoices than that.
+      // safe(odoo.searchRead("account.move", invoiceDomain, ["amount_total"], 10000), []),
+      // safe(odoo.searchCount("account.move", invoiceDomain), 0),
+      // ownScope ? safe(odoo.searchRead("project.task", [["user_ids", "in", [uid]]], ["project_id"], 2000), []) : Promise.resolve(null),
+      // safe(odoo.searchCount("project.task", taskDomain), 0),
+      safe(odoo.searchCount("sale.order", orderDomain), 0, "orders"),
+safe(odoo.searchCount("sale.order", quoteDomain), 0, "quotations"),
+safe(
+  odoo.searchRead(
+    "account.move",
+    invoiceDomain,
+    ["amount_total"],
+    10000
+  ),
+  [],
+  "posted invoices"
+),
+safe(odoo.searchCount("account.move", invoiceDomain), 0, "invoices"),
+ownScope
+  ? safe(
+      odoo.searchRead(
+        "project.task",
+        [["user_ids", "in", [uid]]],
+        ["project_id"],
+        2000
+      ),
+      [],
+      "my project tasks"
+    )
+  : Promise.resolve(null),
+safe(odoo.searchCount("project.task", taskDomain), 0, "tasks"),
     ]);
 
     const projects = ownScope

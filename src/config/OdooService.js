@@ -88,6 +88,13 @@ console.log("Database:", odooConfig.db);
     // `allowed_company_ids` in the call's context. Odoo's own record rules
     // then filter every query as if we'd logged in as that real user.
     const companyIds = requestContext.getCompanyIds();
+    console.log("========== ODOO REQUEST ==========");
+console.log("Model:", model);
+console.log("Method:", method);
+console.log("Admin UID:", uid);
+console.log("Company IDs:", companyIds);
+console.log("Args:", JSON.stringify(args));
+console.log("==================================");
     const finalKwargs = companyIds?.length
       ? {
           ...kwargs,
