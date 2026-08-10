@@ -430,4 +430,68 @@ const debugModelSearch = async (req, res) => {
   }
 };
 
-module.exports = { createTenant, updateTenant, deleteTenant, addUser, removeUser, listTenants, debugUserFields, debugProductFields, debugModuleSearch, debugActionInfo, debugModelSearch };
+// MOST RELIABLE PATH — GET /api/admin/debug/menu-search?q=Daily Data Entry
+// Searches ir.ui.menu by the exact label shown in the app's own menu,
+// then follows that menu item's direct `action` link to resolve the
+// real model. This is authoritative — a menu's action link is exactly
+// what Odoo itself uses to open that screen, so there's no ambiguity
+// left over from guessing keywords or trusting a URL's action id (which
+// can point somewhere unexpected, as we found out the hard way).
+const debugMenuSearch = async (req, res) => {
+  const q = req.query.q || "";
+  if (!q) return error(res, "Pass ?q=Daily Data Entry (the exact label from the app's menu)", 400);
+
+  try {
+    const menus = await odoo.searchRead(
+      "ir.ui.menu",
+      [["name", "ilike", q]],
+      ["id", "name", "complete_name", "action"],
+      50
+    );
+
+    const resolved = [];
+    for (const menu of menus) {
+      if (!menu.action) {
+        resolved.push({ menuId: menu.id, menuName: menu.name, path: menu.complete_name, note: "This menu item has no direct action (likely a parent/folder menu, not a clickable screen)." });
+        continue;
+      }
+
+      // Odoo returns ir.ui.menu.action as a reference string like
+      // "ir.actions.act_window,633" — model name, comma, id.
+      const [actionModel, actionIdStr] = String(menu.action).split(",");
+      const actionId = parseInt(actionIdStr, 10);
+      const entry = { menuId: menu.id, menuName: menu.name, path: menu.complete_name, actionRef: menu.action };
+
+      if (actionModel === "ir.actions.act_window" && actionId) {
+        try {
+          const details = await odoo.searchRead(actionModel, [["id", "=", actionId]], ["res_model", "name"], 1);
+          entry.resModel = details[0]?.res_model || null;
+          if (entry.resModel) {
+            try {
+              entry.fields = await odoo.searchRead(
+                "ir.model.fields",
+                [["model", "=", entry.resModel]],
+                ["name", "field_description", "ttype"],
+                200
+              );
+            } catch (e) {
+              entry.fields = { error: e.message };
+            }
+          }
+        } catch (e) {
+          entry.error = e.message;
+        }
+      } else {
+        entry.note = `This is a "${actionModel}" action, not a standard window action — needs different handling.`;
+      }
+
+      resolved.push(entry);
+    }
+
+    return success(res, resolved);
+  } catch (err) {
+    return error(res, "Menu search failed: " + err.message, 500);
+  }
+};
+
+module.exports = { createTenant, updateTenant, deleteTenant, addUser, removeUser, listTenants, debugUserFields, debugProductFields, debugModuleSearch, debugActionInfo, debugModelSearch, debugMenuSearch };
