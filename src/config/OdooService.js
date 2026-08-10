@@ -87,20 +87,21 @@ console.log("Database:", odooConfig.db);
     // THIS specific logged-in user is actually allowed to see, via
     // `allowed_company_ids` in the call's context. Odoo's own record rules
     // then filter every query as if we'd logged in as that real user.
-    const companyIds = requestContext.getCompanyIds();
-    console.log("========== ODOO REQUEST ==========");
-console.log("Model:", model);
-console.log("Method:", method);
-console.log("Admin UID:", uid);
-console.log("Company IDs:", companyIds);
-console.log("Args:", JSON.stringify(args));
-console.log("==================================");
-    const finalKwargs = companyIds?.length
-      ? {
-          ...kwargs,
-          context: { ...(kwargs.context || {}), allowed_company_ids: companyIds },
-        }
-      : kwargs;
+//     const companyIds = requestContext.getCompanyIds();
+//     console.log("========== ODOO REQUEST ==========");
+// console.log("Model:", model);
+// console.log("Method:", method);
+// console.log("Admin UID:", uid);
+// console.log("Company IDs:", companyIds);
+// console.log("Args:", JSON.stringify(args));
+// console.log("==================================");
+//     const finalKwargs = companyIds?.length
+//       ? {
+//           ...kwargs,
+//           context: { ...(kwargs.context || {}), allowed_company_ids: companyIds },
+//         }
+//       : kwargs;
+const finalKwargs = kwargs;
 
     return new Promise((resolve, reject) => {
       clients.models.methodCall(
