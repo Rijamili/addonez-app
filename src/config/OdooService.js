@@ -101,7 +101,15 @@ console.log("Database:", odooConfig.db);
 //           context: { ...(kwargs.context || {}), allowed_company_ids: companyIds },
 //         }
 //       : kwargs;
-const finalKwargs = kwargs;
+const companyIds = requestContext.getCompanyIds();
+
+const finalKwargs = {
+  ...kwargs,
+  context: {
+    ...(kwargs.context || {}),
+    allowed_company_ids: companyIds,
+  },
+};
 
     return new Promise((resolve, reject) => {
       clients.models.methodCall(
