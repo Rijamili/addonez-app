@@ -105,16 +105,27 @@ exports.getMenu = async (req, res) => {
 
     const annotate = (node) => {
       let actionId = null;
+      let isClientAction = false;
       if (node.action) {
         const [model, id] = String(node.action).split(",");
         if (model === "ir.actions.act_window" && validWindowActionIds.has(parseInt(id, 10))) {
           actionId = parseInt(id, 10);
+        } else if (model === "ir.actions.client") {
+          // A custom bespoke JS/OWL widget (e.g. a hand-built dashboard)
+          // — there's no generic way to reconstruct someone's hand-coded
+          // component from Odoo metadata, so this can't open the real
+          // screen. Instead of leaving it as a dead end, the frontend
+          // routes taps on these to our own auto-generated dashboard
+          // (see outletController.getDashboard) — not the exact same
+          // UI, but a real, working substitute rather than nothing.
+          isClientAction = true;
         }
       }
       return {
         id: node.id,
         name: node.name,
-        actionId, // null = folder/parent menu, not directly clickable
+        actionId, // null = folder/parent menu OR unsupported action type
+        isClientAction,
         children: node.children.map(annotate),
       };
     };
@@ -171,16 +182,27 @@ exports.getDashboard = async (req, res) => {
     const actions = await odoo.searchRead(
       "ir.actions.act_window",
       [["id", "in", [...new Set(windowActionIds)]]],
-      ["res_model"],
+      ["res_model", "name"],
       windowActionIds.length
     );
-    const distinctModels = [...new Set(actions.map((a) => a.res_model))];
 
-    // Find the first model with both a date field and an outlet field.
-    let sourceModel = null;
-    let dateField = null;
-    let companyField = null;
-    let allFields = null;
+    // Multiple screens can share the "has a date + an outlet field"
+    // shape (e.g. a daily log AND a monthly settlement table both
+    // qualify) — picking whichever came first in an arbitrary list
+    // order was landing on the wrong one. Score each candidate model:
+    // strongly prefer one whose screen name literally contains "daily"
+    // (the common convention for these apps' real activity log), and
+    // as a tiebreaker/fallback, prefer whichever has the most records
+    // this month — a genuine per-day log will have far more rows than
+    // a once-a-month settlement table.
+    const modelToActionNames = {};
+    actions.forEach((a) => {
+      if (!modelToActionNames[a.res_model]) modelToActionNames[a.res_model] = [];
+      modelToActionNames[a.res_model].push(a.name);
+    });
+    const distinctModels = Object.keys(modelToActionNames);
+
+    const candidates = [];
     for (const model of distinctModels) {
       const fields = await odoo.searchRead(
         "ir.model.fields",
@@ -192,17 +214,22 @@ exports.getDashboard = async (req, res) => {
       const foundDate = business.find((f) => f.ttype === "date" || f.ttype === "datetime");
       const foundCompany = business.find((f) => f.ttype === "many2one" && f.relation === "res.company");
       if (foundDate && foundCompany) {
-        sourceModel = model;
-        dateField = foundDate;
-        companyField = foundCompany;
-        allFields = business;
-        break;
+        candidates.push({ model, dateField: foundDate, companyField: foundCompany, allFields: business });
       }
     }
 
-    if (!sourceModel) {
+    if (!candidates.length) {
       return error(res, "No screen with both a date field and an outlet field was found to build a dashboard from.", 404);
     }
+
+    const monthStartForScoring = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
+    for (const c of candidates) {
+      const looksLikeDailyLog = modelToActionNames[c.model].some((name) => /daily/i.test(name));
+      const recordCount = await odoo.searchCount(c.model, [[c.dateField.name, ">=", monthStartForScoring]]);
+      c.score = (looksLikeDailyLog ? 100000 : 0) + recordCount;
+    }
+    candidates.sort((a, b) => b.score - a.score);
+    const { model: sourceModel, dateField, companyField, allFields } = candidates[0];
 
     const monetaryFields = allFields.filter((f) => f.ttype === "monetary");
     const percentFields = allFields.filter(
