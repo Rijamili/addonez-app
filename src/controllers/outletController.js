@@ -105,27 +105,28 @@ exports.getMenu = async (req, res) => {
 
     const annotate = (node) => {
       let actionId = null;
-      let isClientAction = false;
+      let isUnsupportedAction = false;
       if (node.action) {
         const [model, id] = String(node.action).split(",");
         if (model === "ir.actions.act_window" && validWindowActionIds.has(parseInt(id, 10))) {
           actionId = parseInt(id, 10);
-        } else if (model === "ir.actions.client") {
-          // A custom bespoke JS/OWL widget (e.g. a hand-built dashboard)
-          // — there's no generic way to reconstruct someone's hand-coded
-          // component from Odoo metadata, so this can't open the real
-          // screen. Instead of leaving it as a dead end, the frontend
-          // routes taps on these to our own auto-generated dashboard
-          // (see outletController.getDashboard) — not the exact same
-          // UI, but a real, working substitute rather than nothing.
-          isClientAction = true;
+        } else {
+          // Anything that isn't a normal window action — a custom
+          // client widget (ir.actions.client), a report action, a
+          // server action, etc. — can't be generically rendered from
+          // Odoo metadata alone. Rather than enumerate every possible
+          // action type, treat ANYTHING that isn't a valid window
+          // action as "unsupported", and let the frontend route taps
+          // on these to our own auto-generated dashboard instead of a
+          // dead end.
+          isUnsupportedAction = true;
         }
       }
       return {
         id: node.id,
         name: node.name,
         actionId, // null = folder/parent menu OR unsupported action type
-        isClientAction,
+        isClientAction: isUnsupportedAction,
         children: node.children.map(annotate),
       };
     };
