@@ -532,6 +532,57 @@ exports.getCompanies = async (req, res) => {
 // model's real (business, non-system) fields and their labels straight
 // from Odoo, then reads the data — all live, no per-tenant field
 // mapping involved anywhere in this function.
+// Odoo's real list view only shows the handful of fields its arch XML
+// actually lists — not every field on the model. Without that, the
+// generic screen was dumping every business field (including internal
+// computed breakdowns like "Franchise Royalty %" or "Total Share Across
+// All Partners") into a single card, badly diverging from the compact
+// column set the tenant's own list view shows. This pulls that view's
+// real field order + labels straight from Odoo, so the fallback still
+// works generically for ANY tenant's screen, but now matches what
+// their own list view actually displays whenever one can be found.
+async function getListViewFieldOrder(model, actionId) {
+  try {
+    // Prefer the view explicitly attached to this action...
+    const actionViews = await odoo.searchRead(
+      "ir.actions.act_window.view",
+      [["act_window_id", "=", actionId], ["view_mode", "in", ["tree", "list"]]],
+      ["view_id"], 5
+    );
+    let viewId = actionViews.find((v) => v.view_id)?.view_id?.[0];
+
+    // ...falling back to the model's own default tree/list view.
+    if (!viewId) {
+      const defaultViews = await odoo.searchRead(
+        "ir.ui.view",
+        [["model", "=", model], ["type", "in", ["tree", "list"]]],
+        ["id"], 1, 0, "priority asc"
+      );
+      viewId = defaultViews[0]?.id;
+    }
+    if (!viewId) return null;
+
+    const viewRecords = await odoo.read("ir.ui.view", [viewId], ["arch_db", "arch"]);
+    const arch = viewRecords[0]?.arch_db || viewRecords[0]?.arch;
+    if (!arch) return null;
+
+    // Cheap top-level <field name="x" string="Label"/> scan — good
+    // enough for the flat list views these custom apps use; doesn't
+    // try to handle fields nested inside a one2many sub-view.
+    const fieldTagPattern = /<field\b[^>]*\bname=["']([^"']+)["'][^>]*\/?>/g;
+    const stringAttrPattern = /\bstring=["']([^"']+)["']/;
+    const order = [];
+    let match;
+    while ((match = fieldTagPattern.exec(arch)) !== null) {
+      const stringMatch = stringAttrPattern.exec(match[0]);
+      order.push({ name: match[1], label: stringMatch?.[1] || null });
+    }
+    return order.length ? order : null;
+  } catch (e) {
+    return null; // any lookup failure just falls back to "show every business field"
+  }
+}
+
 exports.getScreenData = async (req, res) => {
   try {
     requireModuleName(req);
@@ -556,6 +607,19 @@ exports.getScreenData = async (req, res) => {
       return error(res, `"${screenName}" has no displayable fields on model "${model}".`, 501);
     }
 
+    // Narrow (and reorder/relabel) down to the tenant's own list view
+    // columns when we can find that view — falls back to every business
+    // field on the model if the view lookup or parsing didn't pan out.
+    const viewFieldOrder = await getListViewFieldOrder(model, actionId);
+    let displayFields = businessFields;
+    if (viewFieldOrder) {
+      const byName = Object.fromEntries(businessFields.map((f) => [f.name, f]));
+      const matched = viewFieldOrder
+        .filter((v) => byName[v.name])
+        .map((v) => ({ ...byName[v.name], field_description: v.label || byName[v.name].field_description }));
+      if (matched.length) displayFields = matched;
+    }
+
     // Try to find a date field and a company/outlet field to apply
     // sensible default scoping (current month, single outlet) — same
     // idea as before, but discovered by TYPE/relation instead of a
@@ -575,13 +639,13 @@ exports.getScreenData = async (req, res) => {
       domain.push([companyField.name, "=", parseInt(req.query.companyId, 10)]);
     }
 
-    const fieldNames = businessFields.map((f) => f.name);
+    const fieldNames = displayFields.map((f) => f.name);
     const rows = await odoo.searchRead(model, domain, fieldNames, 500, 0, dateField ? `${dateField.name} desc` : "");
 
     return success(res, {
       screenName,
       model,
-      columns: businessFields.map((f) => ({ name: f.name, label: f.field_description, type: f.ttype })),
+      columns: displayFields.map((f) => ({ name: f.name, label: f.field_description, type: f.ttype })),
       hasDateFilter: !!dateField,
       hasCompanyFilter: !!companyField,
       rows,
