@@ -398,27 +398,32 @@ exports.getAdminPanel = async (req, res) => {
       const companyName = r[companyField.name]?.[1];
       if (!companyId) return;
       if (!byCompany[companyId]) {
-        byCompany[companyId] = { id: companyId, outletName: companyName, yesterdaySale: 0, monthTotal: 0, monthlyAvgFoodCostPct: 0, _latestDate: null };
+        byCompany[companyId] = { id: companyId, outletName: companyName, yesterdaySale: 0, monthTotal: 0, _pctSum: 0, _pctCount: 0 };
       }
       const bucket = byCompany[companyId];
       const saleVal = totalSaleField ? Number(r[totalSaleField.name] || 0) : 0;
       bucket.monthTotal += saleVal;
       if (r[dateField.name] === yesterdayStr) bucket.yesterdaySale += saleVal;
-      if (!bucket._latestDate || r[dateField.name] > bucket._latestDate) {
-        bucket._latestDate = r[dateField.name];
-        bucket.monthlyAvgFoodCostPct = foodCostPctField ? Number(r[foodCostPctField.name] || 0) : 0;
+      // A genuine average across every daily entry this month, not just
+      // whichever record happens to be dated latest — a single day left
+      // at 0 (unfilled, or genuinely zero) shouldn't zero out the whole
+      // month's figure for outlets that otherwise have real activity.
+      if (foodCostPctField) {
+        bucket._pctSum += Number(r[foodCostPctField.name] || 0);
+        bucket._pctCount += 1;
       }
     });
 
     const outlets = await odoo.searchRead("res.company", [], ["id", "name"], 200, 0, "name asc");
     const rowsOut = outlets.map((o) => {
       const b = byCompany[o.id];
+      const monthlyAvgFoodCostPct = b && b._pctCount ? b._pctSum / b._pctCount : 0;
       return {
         id: o.id,
         outletName: o.name,
         yesterdaySale: Math.round((b?.yesterdaySale || 0) * 100) / 100,
         monthTotal: Math.round((b?.monthTotal || 0) * 100) / 100,
-        monthlyAvgFoodCostPct: Math.round((b?.monthlyAvgFoodCostPct || 0) * 100) / 100,
+        monthlyAvgFoodCostPct: Math.round(monthlyAvgFoodCostPct * 100) / 100,
       };
     });
 
