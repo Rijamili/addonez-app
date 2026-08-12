@@ -226,7 +226,11 @@ const SECTION_RULES = [
   { key: "foodCost", test: /food\s*cost/i },
   { key: "balances", test: /bank balance|cash on hand|balance/i },
   { key: "payments", test: /\bcash\b|bank transfer|\bcard\b|swiggy|zomato|online platform|total collected|tally|variance|upi|payment/i },
-  { key: "costDeductions", test: /deduction|salary advance|paid to roll|\bcost\b/i },
+  // Broadened past just "deduction"/"cost" — real-world fields like
+  // "Other Expense / Salary / Advance" use "expense"/"salary"/"advance"
+  // without the word "deduction" ever appearing, and were silently
+  // falling through to an "other" bucket instead of COST & DEDUCTIONS.
+  { key: "costDeductions", test: /deduction|salary|advance|paid to roll|expense|\bcost\b/i },
   { key: "sales", test: /sale/i },
 ];
 function classifyField(label) {
