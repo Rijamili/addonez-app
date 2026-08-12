@@ -152,7 +152,10 @@ exports.getMenu = async (req, res) => {
 // view below is built from. No hardcoded field/model names — same
 // heuristic scoring used everywhere: prefer a screen name containing
 // "daily", tiebreak by whichever model has the most rows this month.
-async function discoverDailyLogModel(moduleName) {
+// Shared by discoverDailyLogModel/discoverSummaryModel: every window
+// action this module's menu tree exposes, grouped by the model each
+// points at, plus that model's own business fields.
+async function scanModuleModels(moduleName) {
   const menuData = await odoo.searchRead(
     "ir.model.data",
     [["module", "=", moduleName], ["model", "=", "ir.ui.menu"]],
@@ -184,17 +187,26 @@ async function discoverDailyLogModel(moduleName) {
     if (!modelToActionNames[a.res_model]) modelToActionNames[a.res_model] = [];
     modelToActionNames[a.res_model].push(a.name);
   });
-  const distinctModels = Object.keys(modelToActionNames);
 
-  const candidates = [];
-  for (const model of distinctModels) {
+  const models = {};
+  for (const model of Object.keys(modelToActionNames)) {
     const fields = await odoo.searchRead(
       "ir.model.fields",
       [["model", "=", model]],
       ["name", "field_description", "ttype", "relation"],
       300
     );
-    const business = fields.filter((f) => isBusinessField(f.name));
+    models[model] = fields.filter((f) => isBusinessField(f.name));
+  }
+  return { modelToActionNames, models };
+}
+
+async function discoverDailyLogModel(moduleName) {
+  const { modelToActionNames, models } = await scanModuleModels(moduleName);
+
+  const candidates = [];
+  for (const model of Object.keys(models)) {
+    const business = models[model];
     const foundDate = business.find((f) => f.ttype === "date" || f.ttype === "datetime");
     const foundCompany = business.find((f) => f.ttype === "many2one" && f.relation === "res.company");
     if (foundDate && foundCompany) {
@@ -214,6 +226,30 @@ async function discoverDailyLogModel(moduleName) {
   }
   candidates.sort((a, b) => b.score - a.score);
   return candidates[0];
+}
+
+// Odoo's own Admin Panel isn't computed on the fly at all — it's a
+// plain list view over a dedicated per-outlet SUMMARY model that Odoo
+// itself keeps up to date (the same model behind the "List View" menu
+// item, whose fields are literally "Yesterday Sale", "This Month Total
+// Sale", "Monthly Average Food Cost (%)"). Recomputing those figures
+// from the raw daily log — whether by summing, or by grabbing the
+// latest day's value — is always going to drift from whatever formula
+// Odoo's own module actually uses internally. Reading Odoo's own
+// already-computed fields directly is the only way to match exactly.
+async function discoverSummaryModel(moduleName) {
+  const { models } = await scanModuleModels(moduleName);
+  for (const model of Object.keys(models)) {
+    const business = models[model];
+    const companyField = business.find((f) => f.ttype === "many2one" && f.relation === "res.company");
+    const yesterdayField = business.find((f) => f.ttype === "monetary" && /yesterday.*sale/i.test(f.field_description));
+    const monthTotalField = business.find((f) => f.ttype === "monetary" && /this month.*(total.*)?sale|month.*total.*sale/i.test(f.field_description));
+    const avgPctField = business.find((f) => f.ttype === "float" && /monthly average.*food cost|food cost.*monthly average/i.test(f.field_description));
+    if (companyField && yesterdayField && monthTotalField && avgPctField) {
+      return { model, companyField, yesterdayField, monthTotalField, avgPctField };
+    }
+  }
+  return null;
 }
 
 // Keyword buckets that mirror the section headers Odoo's own
@@ -361,19 +397,68 @@ exports.getDashboard = async (req, res) => {
 // GET /api/outlet/admin-panel?date=YYYY-MM-DD
 // Matches Odoo's own "Admin Panel - Outlet-wise Dashboard" LIST view:
 // one row per outlet with Yesterday Sale / This Month Total / Monthly
-// Avg Food Cost %. `date` is optional and shifts what "yesterday" and
-// "this month" mean, so the screen can be pointed at any past period.
+// Avg Food Cost %.
 exports.getAdminPanel = async (req, res) => {
   try {
     const moduleName = requireModuleName(req);
+
+    // Preferred path: read Odoo's own precomputed per-outlet summary
+    // model directly (see discoverSummaryModel) — this is exactly what
+    // Odoo's Admin Panel itself displays, so it can't drift from it.
+    // `date` has no effect here since these are Odoo's own live current
+    // figures, not something recomputed per requested date.
+    const summary = await discoverSummaryModel(moduleName);
+    if (summary) {
+      const { model, companyField, yesterdayField, monthTotalField, avgPctField } = summary;
+      const summaryRows = await odoo.searchRead(
+        model, [],
+        [companyField.name, yesterdayField.name, monthTotalField.name, avgPctField.name],
+        500
+      );
+      const byCompanyId = {};
+      summaryRows.forEach((r) => {
+        const cid = r[companyField.name]?.[0];
+        if (!cid) return;
+        byCompanyId[cid] = {
+          yesterdaySale: Number(r[yesterdayField.name] || 0),
+          monthTotal: Number(r[monthTotalField.name] || 0),
+          monthlyAvgFoodCostPct: Number(r[avgPctField.name] || 0),
+        };
+      });
+
+      const outlets = await odoo.searchRead("res.company", [], ["id", "name"], 200, 0, "name asc");
+      const rowsOut = outlets.map((o) => ({
+        id: o.id,
+        outletName: o.name,
+        yesterdaySale: Math.round((byCompanyId[o.id]?.yesterdaySale || 0) * 100) / 100,
+        monthTotal: Math.round((byCompanyId[o.id]?.monthTotal || 0) * 100) / 100,
+        monthlyAvgFoodCostPct: Math.round((byCompanyId[o.id]?.monthlyAvgFoodCostPct || 0) * 100) / 100,
+      }));
+
+      return success(res, {
+        sourceModel: model,
+        liveFromOdoo: true,
+        columns: [
+          { name: "outletName", label: "Outlet" },
+          { name: "yesterdaySale", label: "Yesterday Sale", type: "monetary" },
+          { name: "monthTotal", label: "This Month Total", type: "monetary" },
+          { name: "monthlyAvgFoodCostPct", label: "Monthly Avg Food Cost %", type: "percent" },
+        ],
+        rows: rowsOut,
+      });
+    }
+
+    // Fallback: no dedicated summary model found for this tenant's
+    // module — approximate the same numbers from the raw daily log
+    // instead. This can drift slightly from Odoo's own internal
+    // formula (e.g. if it weights by something these heuristics can't
+    // see), but is far better than showing nothing.
     const { model: sourceModel, dateField, companyField, allFields } = await discoverDailyLogModel(moduleName);
 
     const monetaryFields = allFields.filter((f) => f.ttype === "monetary");
     const percentFields = allFields.filter(
       (f) => f.ttype === "float" && /%|percent|pct/i.test(f.field_description)
     );
-    // Prefer a field literally called "Total Sale"; fall back to the
-    // first monetary field so screens with different naming still work.
     const totalSaleField = monetaryFields.find((f) => /total\s*sale/i.test(f.field_description)) || monetaryFields[0];
     const foodCostPctField = percentFields.find((f) => /food\s*cost/i.test(f.field_description)) || percentFields[0];
 
@@ -398,37 +483,33 @@ exports.getAdminPanel = async (req, res) => {
       const companyName = r[companyField.name]?.[1];
       if (!companyId) return;
       if (!byCompany[companyId]) {
-        byCompany[companyId] = { id: companyId, outletName: companyName, yesterdaySale: 0, monthTotal: 0, _pctSum: 0, _pctCount: 0 };
+        byCompany[companyId] = { id: companyId, outletName: companyName, yesterdaySale: 0, monthTotal: 0, monthlyAvgFoodCostPct: 0, _latestDate: null };
       }
       const bucket = byCompany[companyId];
       const saleVal = totalSaleField ? Number(r[totalSaleField.name] || 0) : 0;
       bucket.monthTotal += saleVal;
       if (r[dateField.name] === yesterdayStr) bucket.yesterdaySale += saleVal;
-      // A genuine average across every daily entry this month, not just
-      // whichever record happens to be dated latest — a single day left
-      // at 0 (unfilled, or genuinely zero) shouldn't zero out the whole
-      // month's figure for outlets that otherwise have real activity.
-      if (foodCostPctField) {
-        bucket._pctSum += Number(r[foodCostPctField.name] || 0);
-        bucket._pctCount += 1;
+      if (!bucket._latestDate || r[dateField.name] > bucket._latestDate) {
+        bucket._latestDate = r[dateField.name];
+        bucket.monthlyAvgFoodCostPct = foodCostPctField ? Number(r[foodCostPctField.name] || 0) : 0;
       }
     });
 
     const outlets = await odoo.searchRead("res.company", [], ["id", "name"], 200, 0, "name asc");
     const rowsOut = outlets.map((o) => {
       const b = byCompany[o.id];
-      const monthlyAvgFoodCostPct = b && b._pctCount ? b._pctSum / b._pctCount : 0;
       return {
         id: o.id,
         outletName: o.name,
         yesterdaySale: Math.round((b?.yesterdaySale || 0) * 100) / 100,
         monthTotal: Math.round((b?.monthTotal || 0) * 100) / 100,
-        monthlyAvgFoodCostPct: Math.round(monthlyAvgFoodCostPct * 100) / 100,
+        monthlyAvgFoodCostPct: Math.round((b?.monthlyAvgFoodCostPct || 0) * 100) / 100,
       };
     });
 
     return success(res, {
       sourceModel,
+      liveFromOdoo: false,
       date: monthEnd,
       columns: [
         { name: "outletName", label: "Outlet" },
