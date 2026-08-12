@@ -583,6 +583,29 @@ async function getListViewFieldOrder(model, actionId) {
   }
 }
 
+// Screens like Odoo's "Sales Analysis" default to a grouped list (group
+// by Outlet, sums per column, a totals row) rather than a flat record
+// list — that's driven by a `group_by` key in the action's own default
+// context, not something visible on the model itself. This pulls that
+// context, and if the first group-by field is a many2one, returns the
+// field to group on; everything downstream (sums, count, totals row)
+// is computed generically off whatever columns the screen already has.
+async function getGroupByField(actionId, businessFields) {
+  try {
+    const actionRows = await odoo.searchRead("ir.actions.act_window", [["id", "=", actionId]], ["context"], 1);
+    const ctxStr = actionRows[0]?.context;
+    if (!ctxStr) return null;
+    const match = /'group_by':\s*\[([^\]]*)\]/.exec(ctxStr) || /"group_by":\s*\[([^\]]*)\]/.exec(ctxStr);
+    if (!match) return null;
+    const firstGroupRaw = match[1].split(",")[0]?.trim().replace(/^["']|["']$/g, "");
+    if (!firstGroupRaw) return null;
+    const fieldName = firstGroupRaw.split(":")[0]; // strip Odoo's "date:month" style suffix
+    return businessFields.find((f) => f.name === fieldName && f.ttype === "many2one") || null;
+  } catch (e) {
+    return null;
+  }
+}
+
 exports.getScreenData = async (req, res) => {
   try {
     requireModuleName(req);
@@ -640,7 +663,71 @@ exports.getScreenData = async (req, res) => {
     }
 
     const fieldNames = displayFields.map((f) => f.name);
+    const groupField = await getGroupByField(actionId, businessFields);
+    if (groupField && !fieldNames.includes(groupField.name)) fieldNames.push(groupField.name);
+
     const rows = await odoo.searchRead(model, domain, fieldNames, 500, 0, dateField ? `${dateField.name} desc` : "");
+
+    // Some screens (e.g. Odoo's own "Sales Analysis") default to a
+    // grouped list — one row per outlet with sums, not one row per
+    // daily record. Detect that from the action's own default context
+    // and, if found, return the aggregated shape instead of raw rows.
+    if (groupField) {
+      const monetaryCols = displayFields.filter((f) => f.ttype === "monetary");
+      const percentCols = displayFields.filter((f) => f.ttype === "float" && /%|percent|pct/i.test(f.field_description));
+      const byGroup = {};
+      rows.forEach((r) => {
+        const gid = r[groupField.name]?.[0];
+        const gname = r[groupField.name]?.[1];
+        if (!gid) return;
+        if (!byGroup[gid]) {
+          byGroup[gid] = { id: gid, name: gname, count: 0, sums: {}, _pctSum: {} };
+          monetaryCols.forEach((f) => { byGroup[gid].sums[f.name] = 0; });
+          percentCols.forEach((f) => { byGroup[gid]._pctSum[f.name] = { sum: 0, n: 0 }; });
+        }
+        const bucket = byGroup[gid];
+        bucket.count += 1;
+        monetaryCols.forEach((f) => { bucket.sums[f.name] += Number(r[f.name] || 0); });
+        percentCols.forEach((f) => {
+          bucket._pctSum[f.name].sum += Number(r[f.name] || 0);
+          bucket._pctSum[f.name].n += 1;
+        });
+      });
+
+      const groups = Object.values(byGroup).map((b) => {
+        const sums = {};
+        monetaryCols.forEach((f) => { sums[f.name] = Math.round(b.sums[f.name] * 100) / 100; });
+        percentCols.forEach((f) => {
+          const { sum, n } = b._pctSum[f.name];
+          sums[f.name] = n ? Math.round((sum / n) * 100) / 100 : 0;
+        });
+        return { id: b.id, name: b.name, count: b.count, values: sums };
+      }).sort((a, b) => a.name.localeCompare(b.name));
+
+      const totals = {};
+      monetaryCols.forEach((f) => { totals[f.name] = Math.round(groups.reduce((s, g) => s + (g.values[f.name] || 0), 0) * 100) / 100; });
+      percentCols.forEach((f) => {
+        const withData = groups.filter((g) => g.count > 0);
+        totals[f.name] = withData.length
+          ? Math.round((withData.reduce((s, g) => s + (g.values[f.name] || 0), 0) / withData.length) * 100) / 100
+          : 0;
+      });
+
+      return success(res, {
+        screenName,
+        model,
+        grouped: true,
+        groupByLabel: groupField.field_description,
+        columns: [...monetaryCols, ...percentCols].map((f) => ({
+          name: f.name, label: f.field_description,
+          type: monetaryCols.includes(f) ? "monetary" : "percent",
+        })),
+        groups,
+        totals,
+        hasDateFilter: !!dateField,
+        hasCompanyFilter: false, // grouping IS the outlet breakdown — a separate outlet filter would just collapse it to one group
+      });
+    }
 
     return success(res, {
       screenName,
