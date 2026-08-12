@@ -20,5 +20,7 @@ router.get("/admin-panel", outletController.getAdminPanel);
 router.get("/day-summary", outletController.getDaySummary);
 router.get("/companies", outletController.getCompanies);
 router.get("/screen/:actionId", outletController.getScreenData);
+router.get("/record/:model/:id", outletController.getRecordDetail);
+router.post("/record/:model", outletController.createRecord);
 
 module.exports = router;

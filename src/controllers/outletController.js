@@ -832,6 +832,125 @@ exports.getScreenData = async (req, res) => {
   }
 };
 
+// GET /api/outlet/record/:model/:id
+// Tapping a row in a flat list (e.g. Odoo's "Daily Data Entry" list)
+// should open the full record — same as Odoo's own form view — with
+// every business field grouped into the same SALES / COST & DEDUCTIONS
+// / PAYMENT RECEIVED BY METHOD / FOOD COST / BALANCES sections used
+// elsewhere, PLUS whatever one2many line-item tabs the record has
+// (e.g. "Kolkatha Roll Payments", "Direct Expenses"). The requested
+// model is checked against this tenant's own module models first — the
+// generic browser should never be able to fetch an arbitrary Odoo model
+// by name just because a client asked for it.
+exports.getRecordDetail = async (req, res) => {
+  try {
+    const moduleName = requireModuleName(req);
+    const model = req.params.model;
+    const recordId = parseInt(req.params.id, 10);
+    if (!recordId) return error(res, "A valid record id is required.", 400);
+
+    const { models } = await scanModuleModels(moduleName);
+    if (!models[model]) return error(res, "That record's model isn't part of this module.", 403);
+
+    const allModelFields = await odoo.searchRead(
+      "ir.model.fields",
+      [["model", "=", model]],
+      ["name", "field_description", "ttype", "relation", "relation_field"],
+      400
+    );
+    const businessFields = allModelFields.filter((f) => isBusinessField(f.name) && RENDERABLE_TYPES.includes(f.ttype));
+    const one2manyFields = allModelFields.filter((f) => isBusinessField(f.name) && f.ttype === "one2many");
+
+    const mainFieldNames = [...new Set([...businessFields.map((f) => f.name), ...one2manyFields.map((f) => f.name), "display_name"])];
+    const mainRecords = await odoo.read(model, [recordId], mainFieldNames);
+    const record = mainRecords[0];
+    if (!record) return error(res, "That record couldn't be found.", 404);
+
+    const sections = { sales: [], costDeductions: [], payments: [], foodCost: [], balances: [], other: [] };
+    businessFields.forEach((f) => {
+      const item = {
+        name: f.name,
+        label: f.field_description,
+        type: f.ttype === "monetary" ? "monetary" : f.ttype === "float" && /%|percent|pct/i.test(f.field_description) ? "percent" : f.ttype,
+        value: record[f.name],
+      };
+      const bucket = classifyField(f.field_description);
+      (sections[bucket] || sections.other).push(item);
+    });
+
+    const subTables = [];
+    for (const o2m of one2manyFields) {
+      const relModel = o2m.relation;
+      const relIds = record[o2m.name] || [];
+      let columns = [];
+      let rows = [];
+      if (relIds.length) {
+        const relModelFields = await odoo.searchRead(
+          "ir.model.fields",
+          [["model", "=", relModel]],
+          ["name", "field_description", "ttype"],
+          300
+        );
+        const relBusiness = relModelFields.filter(
+          (f) => isBusinessField(f.name) && RENDERABLE_TYPES.includes(f.ttype) && f.name !== o2m.relation_field
+        );
+        columns = relBusiness.map((f) => ({ name: f.name, label: f.field_description, type: f.ttype }));
+        rows = await odoo.read(relModel, relIds, relBusiness.map((f) => f.name));
+      }
+      subTables.push({ name: o2m.name, label: o2m.field_description, columns, rows });
+    }
+
+    return success(res, {
+      model,
+      id: recordId,
+      title: record.display_name || `${model} #${recordId}`,
+      sections,
+      subTables,
+    });
+  } catch (err) {
+    return error(res, `Couldn't load this record: ${err.message}`, err.status || 500);
+  }
+};
+
+// POST /api/outlet/record/:model  { fieldName: value, ... }
+// Backs the "+ New" button on list screens — lets the app create a
+// record the same way Odoo's own "New" button does. Same model
+// allowlist check as getRecordDetail (only this tenant's own module
+// models, never an arbitrary Odoo model), and only fields that are (a)
+// real business fields on that model and (b) not marked readonly are
+// accepted — anything else in the request body is silently dropped
+// rather than passed through to Odoo's create call.
+exports.createRecord = async (req, res) => {
+  try {
+    const moduleName = requireModuleName(req);
+    const model = req.params.model;
+    const { models } = await scanModuleModels(moduleName);
+    if (!models[model]) return error(res, "That model isn't part of this module.", 403);
+
+    const modelFields = await odoo.searchRead(
+      "ir.model.fields",
+      [["model", "=", model]],
+      ["name", "field_description", "ttype", "readonly"],
+      400
+    );
+    const writableFields = modelFields.filter(
+      (f) => isBusinessField(f.name) && RENDERABLE_TYPES.includes(f.ttype) && !f.readonly
+    );
+    const writableNames = new Set(writableFields.map((f) => f.name));
+
+    const values = {};
+    Object.entries(req.body || {}).forEach(([key, val]) => {
+      if (writableNames.has(key) && val !== "" && val !== null && val !== undefined) values[key] = val;
+    });
+    if (!Object.keys(values).length) return error(res, "No valid fields to save.", 400);
+
+    const newId = await odoo.execute(model, "create", [values]);
+    return success(res, { id: newId });
+  } catch (err) {
+    return error(res, `Couldn't save this record: ${err.message}`, err.status || 500);
+  }
+};
+
 exports.isTenantEnabled = (tenantId) => !!getModuleName(tenantId);
 exports.getModuleLabel = (tenantId) => {
   const moduleName = getModuleName(tenantId);
