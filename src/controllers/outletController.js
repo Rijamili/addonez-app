@@ -146,91 +146,109 @@ exports.getMenu = async (req, res) => {
   }
 };
 
+// Shared discovery: scans this module's own screens for the model that
+// has both a date field and an outlet (many2one → res.company) field —
+// that's treated as the "daily activity" data source every dashboard
+// view below is built from. No hardcoded field/model names — same
+// heuristic scoring used everywhere: prefer a screen name containing
+// "daily", tiebreak by whichever model has the most rows this month.
+async function discoverDailyLogModel(moduleName) {
+  const menuData = await odoo.searchRead(
+    "ir.model.data",
+    [["module", "=", moduleName], ["model", "=", "ir.ui.menu"]],
+    ["res_id"],
+    500
+  );
+  const menuIds = menuData.map((d) => d.res_id);
+  if (!menuIds.length) throw Object.assign(new Error("No menus found for this module."), { status: 404 });
+
+  const menus = await odoo.searchRead("ir.ui.menu", [["id", "in", menuIds]], ["action"], 500);
+  const windowActionIds = menus
+    .map((m) => m.action)
+    .filter(Boolean)
+    .map((ref) => String(ref).split(","))
+    .filter(([model]) => model === "ir.actions.act_window")
+    .map(([, id]) => parseInt(id, 10));
+
+  if (!windowActionIds.length) throw Object.assign(new Error("No usable data screens found for this module."), { status: 404 });
+
+  const actions = await odoo.searchRead(
+    "ir.actions.act_window",
+    [["id", "in", [...new Set(windowActionIds)]]],
+    ["res_model", "name"],
+    windowActionIds.length
+  );
+
+  const modelToActionNames = {};
+  actions.forEach((a) => {
+    if (!modelToActionNames[a.res_model]) modelToActionNames[a.res_model] = [];
+    modelToActionNames[a.res_model].push(a.name);
+  });
+  const distinctModels = Object.keys(modelToActionNames);
+
+  const candidates = [];
+  for (const model of distinctModels) {
+    const fields = await odoo.searchRead(
+      "ir.model.fields",
+      [["model", "=", model]],
+      ["name", "field_description", "ttype", "relation"],
+      300
+    );
+    const business = fields.filter((f) => isBusinessField(f.name));
+    const foundDate = business.find((f) => f.ttype === "date" || f.ttype === "datetime");
+    const foundCompany = business.find((f) => f.ttype === "many2one" && f.relation === "res.company");
+    if (foundDate && foundCompany) {
+      candidates.push({ model, dateField: foundDate, companyField: foundCompany, allFields: business });
+    }
+  }
+
+  if (!candidates.length) {
+    throw Object.assign(new Error("No screen with both a date field and an outlet field was found to build a dashboard from."), { status: 404 });
+  }
+
+  const monthStartForScoring = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
+  for (const c of candidates) {
+    const looksLikeDailyLog = modelToActionNames[c.model].some((name) => /daily/i.test(name));
+    const recordCount = await odoo.searchCount(c.model, [[c.dateField.name, ">=", monthStartForScoring]]);
+    c.score = (looksLikeDailyLog ? 100000 : 0) + recordCount;
+  }
+  candidates.sort((a, b) => b.score - a.score);
+  return candidates[0];
+}
+
+// Keyword buckets that mirror the section headers Odoo's own
+// hand-built "Day-wise Financial Dashboard" view uses (SALES, COST &
+// DEDUCTIONS, PAYMENT RECEIVED BY METHOD, FOOD COST, BALANCES). Field
+// labels are matched by keyword rather than a per-tenant field-name
+// map, so any tenant whose module follows similar naming conventions
+// gets the same grouped layout automatically.
+const SECTION_RULES = [
+  { key: "foodCost", test: /food\s*cost/i },
+  { key: "balances", test: /bank balance|cash on hand|balance/i },
+  { key: "payments", test: /\bcash\b|bank transfer|\bcard\b|swiggy|zomato|online platform|total collected|tally|variance|upi|payment/i },
+  { key: "costDeductions", test: /deduction|salary advance|paid to roll|\bcost\b/i },
+  { key: "sales", test: /sale/i },
+];
+function classifyField(label) {
+  for (const rule of SECTION_RULES) {
+    if (rule.test.test(label)) return rule.key;
+  }
+  return "other";
+}
+
 // GET /api/outlet/dashboard
 // Auto-builds a per-outlet KPI dashboard WITHOUT any hardcoded field
-// names: scans this module's own screens for one whose model has both
-// a date field and an outlet (many2one → res.company) field — that's
-// treated as the "daily activity" data source. Every monetary field on
-// that model becomes a Yesterday/This-Month total; every float field
-// whose label looks like a percentage (contains "%"/"percent"/"pct")
-// becomes a latest-value metric. This is a heuristic, not a guarantee —
-// it works well for the common "daily entry per outlet" shape these
-// custom apps tend to have, but a module with a very different data
-// shape may not produce a meaningful dashboard this way.
+// names: every monetary field on the discovered daily-log model becomes
+// a Yesterday/This-Month total; every float field whose label looks
+// like a percentage (contains "%"/"percent"/"pct") becomes a
+// latest-value metric. This is a heuristic, not a guarantee — it works
+// well for the common "daily entry per outlet" shape these custom apps
+// tend to have, but a module with a very different data shape may not
+// produce a meaningful dashboard this way.
 exports.getDashboard = async (req, res) => {
   try {
     const moduleName = requireModuleName(req);
-
-    const menuData = await odoo.searchRead(
-      "ir.model.data",
-      [["module", "=", moduleName], ["model", "=", "ir.ui.menu"]],
-      ["res_id"],
-      500
-    );
-    const menuIds = menuData.map((d) => d.res_id);
-    if (!menuIds.length) return error(res, "No menus found for this module.", 404);
-
-    const menus = await odoo.searchRead("ir.ui.menu", [["id", "in", menuIds]], ["action"], 500);
-    const windowActionIds = menus
-      .map((m) => m.action)
-      .filter(Boolean)
-      .map((ref) => String(ref).split(","))
-      .filter(([model]) => model === "ir.actions.act_window")
-      .map(([, id]) => parseInt(id, 10));
-
-    if (!windowActionIds.length) return error(res, "No usable data screens found for this module.", 404);
-
-    const actions = await odoo.searchRead(
-      "ir.actions.act_window",
-      [["id", "in", [...new Set(windowActionIds)]]],
-      ["res_model", "name"],
-      windowActionIds.length
-    );
-
-    // Multiple screens can share the "has a date + an outlet field"
-    // shape (e.g. a daily log AND a monthly settlement table both
-    // qualify) — picking whichever came first in an arbitrary list
-    // order was landing on the wrong one. Score each candidate model:
-    // strongly prefer one whose screen name literally contains "daily"
-    // (the common convention for these apps' real activity log), and
-    // as a tiebreaker/fallback, prefer whichever has the most records
-    // this month — a genuine per-day log will have far more rows than
-    // a once-a-month settlement table.
-    const modelToActionNames = {};
-    actions.forEach((a) => {
-      if (!modelToActionNames[a.res_model]) modelToActionNames[a.res_model] = [];
-      modelToActionNames[a.res_model].push(a.name);
-    });
-    const distinctModels = Object.keys(modelToActionNames);
-
-    const candidates = [];
-    for (const model of distinctModels) {
-      const fields = await odoo.searchRead(
-        "ir.model.fields",
-        [["model", "=", model]],
-        ["name", "field_description", "ttype", "relation"],
-        300
-      );
-      const business = fields.filter((f) => isBusinessField(f.name));
-      const foundDate = business.find((f) => f.ttype === "date" || f.ttype === "datetime");
-      const foundCompany = business.find((f) => f.ttype === "many2one" && f.relation === "res.company");
-      if (foundDate && foundCompany) {
-        candidates.push({ model, dateField: foundDate, companyField: foundCompany, allFields: business });
-      }
-    }
-
-    if (!candidates.length) {
-      return error(res, "No screen with both a date field and an outlet field was found to build a dashboard from.", 404);
-    }
-
-    const monthStartForScoring = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
-    for (const c of candidates) {
-      const looksLikeDailyLog = modelToActionNames[c.model].some((name) => /daily/i.test(name));
-      const recordCount = await odoo.searchCount(c.model, [[c.dateField.name, ">=", monthStartForScoring]]);
-      c.score = (looksLikeDailyLog ? 100000 : 0) + recordCount;
-    }
-    candidates.sort((a, b) => b.score - a.score);
-    const { model: sourceModel, dateField, companyField, allFields } = candidates[0];
+    const { model: sourceModel, dateField, companyField, allFields } = await discoverDailyLogModel(moduleName);
 
     const monetaryFields = allFields.filter((f) => f.ttype === "monetary");
     const percentFields = allFields.filter(
@@ -300,6 +318,167 @@ exports.getDashboard = async (req, res) => {
     return success(res, { sourceModel, outlets });
   } catch (err) {
     return error(res, `Dashboard build failed: ${err.message}`, err.status || 500);
+  }
+};
+
+// GET /api/outlet/admin-panel?date=YYYY-MM-DD
+// Matches Odoo's own "Admin Panel - Outlet-wise Dashboard" LIST view:
+// one row per outlet with Yesterday Sale / This Month Total / Monthly
+// Avg Food Cost %. `date` is optional and shifts what "yesterday" and
+// "this month" mean, so the screen can be pointed at any past period.
+exports.getAdminPanel = async (req, res) => {
+  try {
+    const moduleName = requireModuleName(req);
+    const { model: sourceModel, dateField, companyField, allFields } = await discoverDailyLogModel(moduleName);
+
+    const monetaryFields = allFields.filter((f) => f.ttype === "monetary");
+    const percentFields = allFields.filter(
+      (f) => f.ttype === "float" && /%|percent|pct/i.test(f.field_description)
+    );
+    // Prefer a field literally called "Total Sale"; fall back to the
+    // first monetary field so screens with different naming still work.
+    const totalSaleField = monetaryFields.find((f) => /total\s*sale/i.test(f.field_description)) || monetaryFields[0];
+    const foodCostPctField = percentFields.find((f) => /food\s*cost/i.test(f.field_description)) || percentFields[0];
+
+    const refDate = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date) ? new Date(req.query.date) : new Date();
+    const yesterday = new Date(refDate);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toISOString().slice(0, 10);
+    const monthStart = new Date(refDate.getFullYear(), refDate.getMonth(), 1).toISOString().slice(0, 10);
+    const monthEnd = refDate.toISOString().slice(0, 10);
+
+    const readFields = [dateField.name, companyField.name, ...(totalSaleField ? [totalSaleField.name] : []), ...(foodCostPctField ? [foodCostPctField.name] : [])];
+    const rows = await odoo.searchRead(
+      sourceModel,
+      [[dateField.name, ">=", monthStart], [dateField.name, "<=", monthEnd]],
+      readFields,
+      5000, 0, `${dateField.name} desc`
+    );
+
+    const byCompany = {};
+    rows.forEach((r) => {
+      const companyId = r[companyField.name]?.[0];
+      const companyName = r[companyField.name]?.[1];
+      if (!companyId) return;
+      if (!byCompany[companyId]) {
+        byCompany[companyId] = { id: companyId, outletName: companyName, yesterdaySale: 0, monthTotal: 0, monthlyAvgFoodCostPct: 0, _latestDate: null };
+      }
+      const bucket = byCompany[companyId];
+      const saleVal = totalSaleField ? Number(r[totalSaleField.name] || 0) : 0;
+      bucket.monthTotal += saleVal;
+      if (r[dateField.name] === yesterdayStr) bucket.yesterdaySale += saleVal;
+      if (!bucket._latestDate || r[dateField.name] > bucket._latestDate) {
+        bucket._latestDate = r[dateField.name];
+        bucket.monthlyAvgFoodCostPct = foodCostPctField ? Number(r[foodCostPctField.name] || 0) : 0;
+      }
+    });
+
+    const outlets = await odoo.searchRead("res.company", [], ["id", "name"], 200, 0, "name asc");
+    const rowsOut = outlets.map((o) => {
+      const b = byCompany[o.id];
+      return {
+        id: o.id,
+        outletName: o.name,
+        yesterdaySale: Math.round((b?.yesterdaySale || 0) * 100) / 100,
+        monthTotal: Math.round((b?.monthTotal || 0) * 100) / 100,
+        monthlyAvgFoodCostPct: Math.round((b?.monthlyAvgFoodCostPct || 0) * 100) / 100,
+      };
+    });
+
+    return success(res, {
+      sourceModel,
+      date: monthEnd,
+      columns: [
+        { name: "outletName", label: "Outlet" },
+        { name: "yesterdaySale", label: "Yesterday Sale", type: "monetary" },
+        { name: "monthTotal", label: "This Month Total", type: "monetary" },
+        { name: "monthlyAvgFoodCostPct", label: "Monthly Avg Food Cost %", type: "percent" },
+      ],
+      rows: rowsOut,
+    });
+  } catch (err) {
+    return error(res, `Admin panel build failed: ${err.message}`, err.status || 500);
+  }
+};
+
+// GET /api/outlet/day-summary?companyId=&date=YYYY-MM-DD
+// Matches Odoo's own "Day-wise Financial Dashboard" screen: a single
+// outlet's single-day entry, with every business field grouped into
+// SALES / COST & DEDUCTIONS / PAYMENT RECEIVED BY METHOD / FOOD COST /
+// BALANCES sections by keyword (see classifyField), plus a monthly
+// average for the food-cost percentage field. companyId defaults to
+// the first outlet, date defaults to today — same defaults Odoo uses.
+exports.getDaySummary = async (req, res) => {
+  try {
+    const moduleName = requireModuleName(req);
+    const { model: sourceModel, dateField, companyField, allFields } = await discoverDailyLogModel(moduleName);
+
+    let companyId = parseInt(req.query.companyId, 10);
+    if (!companyId) {
+      const companies = await odoo.searchRead("res.company", [], ["id", "name"], 1, 0, "name asc");
+      companyId = companies[0]?.id;
+    }
+    if (!companyId) return error(res, "No outlets found.", 404);
+
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date) ? req.query.date : new Date().toISOString().slice(0, 10);
+    const monthStart = new Date(new Date(date).getFullYear(), new Date(date).getMonth(), 1).toISOString().slice(0, 10);
+
+    const readFields = allFields.map((f) => f.name);
+    const dayRows = await odoo.searchRead(
+      sourceModel,
+      [[companyField.name, "=", companyId], [dateField.name, "=", date]],
+      readFields, 1
+    );
+    const record = dayRows[0] || null;
+
+    const percentFields = allFields.filter((f) => f.ttype === "float" && /%|percent|pct/i.test(f.field_description));
+    const foodCostPctField = percentFields.find((f) => /food\s*cost/i.test(f.field_description)) || percentFields[0];
+    let monthlyAvgFoodCostPct = null;
+    if (foodCostPctField) {
+      const monthRows = await odoo.searchRead(
+        sourceModel,
+        [[companyField.name, "=", companyId], [dateField.name, ">=", monthStart], [dateField.name, "<=", date]],
+        [foodCostPctField.name], 5000
+      );
+      if (monthRows.length) {
+        const sum = monthRows.reduce((s, r) => s + Number(r[foodCostPctField.name] || 0), 0);
+        monthlyAvgFoodCostPct = Math.round((sum / monthRows.length) * 100) / 100;
+      }
+    }
+
+    const renderable = allFields.filter((f) => RENDERABLE_TYPES.includes(f.ttype) && f.name !== dateField.name && f.name !== companyField.name);
+    const sections = { sales: [], costDeductions: [], payments: [], balances: [], other: [] };
+    renderable.forEach((f) => {
+      const bucket = classifyField(f.field_description);
+      const item = {
+        name: f.name,
+        label: f.field_description,
+        type: f.ttype === "monetary" ? "monetary" : f.ttype === "float" && /%|percent|pct/i.test(f.field_description) ? "percent" : f.ttype,
+        value: record ? record[f.name] : null,
+      };
+      if (bucket === "foodCost") return; // surfaced separately below, not as a plain row
+      (sections[bucket] || sections.other).push(item);
+    });
+
+    const outlet = (await odoo.searchRead("res.company", [["id", "=", companyId]], ["id", "name"], 1))[0] || null;
+
+    return success(res, {
+      sourceModel,
+      date,
+      outlet,
+      hasEntry: !!record,
+      sales: sections.sales,
+      costDeductions: sections.costDeductions,
+      payments: sections.payments,
+      foodCost: {
+        today: foodCostPctField ? { label: foodCostPctField.field_description, value: record ? record[foodCostPctField.name] : null } : null,
+        monthlyAverage: monthlyAvgFoodCostPct,
+      },
+      balances: sections.balances,
+      other: sections.other,
+    });
+  } catch (err) {
+    return error(res, `Day summary build failed: ${err.message}`, err.status || 500);
   }
 };
 

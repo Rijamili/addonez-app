@@ -16,6 +16,8 @@ router.use(authenticate, (req, res, next) => {
 
 router.get("/menu", outletController.getMenu);
 router.get("/dashboard", outletController.getDashboard);
+router.get("/admin-panel", outletController.getAdminPanel);
+router.get("/day-summary", outletController.getDaySummary);
 router.get("/companies", outletController.getCompanies);
 router.get("/screen/:actionId", outletController.getScreenData);
 
