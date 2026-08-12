@@ -315,7 +315,24 @@ exports.getDashboard = async (req, res) => {
       return { id: bucket.id, outletName: bucket.outletName, metrics };
     });
 
-    return success(res, { sourceModel, outlets });
+    // Hint the frontend toward which single metric is worth charting
+    // across all outlets by default (a screen with 8+ monetary columns
+    // can't sensibly bar-chart all of them at once) — same "Total Sale"
+    // label heuristic used by the admin panel, falling back to whichever
+    // monetary field is largest on average across outlets.
+    let primaryMetricLabel = monetaryFields.find((f) => /total\s*sale/i.test(f.field_description))?.field_description || null;
+    if (!primaryMetricLabel && monetaryFields.length) {
+      const avgByField = monetaryFields.map((f) => {
+        const total = outlets.reduce((s, o) => s + (o.metrics.find((m) => m.label === f.field_description)?.month || 0), 0);
+        return { label: f.field_description, avg: total / (outlets.length || 1) };
+      });
+      avgByField.sort((a, b) => b.avg - a.avg);
+      primaryMetricLabel = avgByField[0]?.label || null;
+    }
+    const primaryPercentLabel = percentFields.find((f) => /food\s*cost/i.test(f.field_description))?.field_description
+      || percentFields[0]?.field_description || null;
+
+    return success(res, { sourceModel, outlets, primaryMetricLabel, primaryPercentLabel });
   } catch (err) {
     return error(res, `Dashboard build failed: ${err.message}`, err.status || 500);
   }
