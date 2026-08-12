@@ -315,6 +315,22 @@ exports.getDashboard = async (req, res) => {
       return { id: bucket.id, outletName: bucket.outletName, metrics };
     });
 
+    // byCompany only ever gets a bucket for outlets that had at least
+    // one daily-entry row this month — an outlet with zero entries
+    // (no activity yet, or just onboarded) silently never appeared in
+    // `outlets` at all. Backfill every real outlet (res.company) with
+    // an all-zero bucket so the dashboard/chart always reflects every
+    // outlet that exists, same fix already applied to getAdminPanel.
+    const allCompanies = await odoo.searchRead("res.company", [], ["id", "name"], 200, 0, "name asc");
+    const presentIds = new Set(outlets.map((o) => o.id));
+    allCompanies.forEach((c) => {
+      if (presentIds.has(c.id)) return;
+      const metrics = [];
+      monetaryFields.forEach((f) => metrics.push({ label: f.field_description, type: "monetary", yesterday: 0, month: 0 }));
+      percentFields.forEach((f) => metrics.push({ label: f.field_description, type: "percent", value: 0 }));
+      outlets.push({ id: c.id, outletName: c.name, metrics });
+    });
+
     // Hint the frontend toward which single metric is worth charting
     // across all outlets by default (a screen with 8+ monetary columns
     // can't sensibly bar-chart all of them at once) — same "Total Sale"
