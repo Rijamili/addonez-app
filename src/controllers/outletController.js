@@ -709,7 +709,7 @@ exports.getScreenData = async (req, res) => {
     const modelFields = await odoo.searchRead(
       "ir.model.fields",
       [["model", "=", model]],
-      ["name", "field_description", "ttype", "relation"],
+      ["name", "field_description", "ttype", "relation", "group_operator"],
       300
     );
 
@@ -758,49 +758,68 @@ exports.getScreenData = async (req, res) => {
 
     const rows = await odoo.searchRead(model, domain, fieldNames, 500, 0, dateField ? `${dateField.name} desc` : "");
 
-    // Some screens (e.g. Odoo's own "Sales Analysis") default to a
-    // grouped list — one row per outlet with sums, not one row per
-    // daily record. Detect that from the action's own default context
-    // and, if found, return the aggregated shape instead of raw rows.
+    // Some screens (e.g. Odoo's own "Sales Analysis" or "Purchase Price
+    // Comparison") default to a grouped list — one row per group with
+    // aggregated numbers, not one row per record. Detect that from the
+    // action's own default context and, if found, return the
+    // aggregated shape instead of raw rows.
     if (groupField) {
-      const monetaryCols = displayFields.filter((f) => f.ttype === "monetary");
-      const percentCols = displayFields.filter((f) => f.ttype === "float" && /%|percent|pct/i.test(f.field_description));
+      // Odoo already knows exactly how each numeric column should be
+      // aggregated — its own `group_operator` field on ir.model.fields
+      // (sum / avg / max / min, or explicitly disabled). Guessing at
+      // this from field labels (e.g. "percent fields get averaged")
+      // was drifting from whatever the tenant's own model actually
+      // specifies. Non-numeric columns (many2one/date/char/etc.) have
+      // no group_operator at all — Odoo shows them blank on a group
+      // summary row since a group can span many different values —
+      // so this does the same rather than silently dropping those
+      // columns entirely.
+      const aggregatable = displayFields.filter(
+        (f) => ["monetary", "float", "integer"].includes(f.ttype) && f.group_operator
+      );
+      const aggOf = Object.fromEntries(aggregatable.map((f) => [f.name, f.group_operator]));
+
+      const aggregate = (values, op) => {
+        if (!values.length) return null;
+        if (op === "avg") return values.reduce((s, v) => s + v, 0) / values.length;
+        if (op === "max") return Math.max(...values);
+        if (op === "min") return Math.min(...values);
+        return values.reduce((s, v) => s + v, 0); // "sum" and any other/unrecognized operator
+      };
+
       const byGroup = {};
       rows.forEach((r) => {
         const gid = r[groupField.name]?.[0];
         const gname = r[groupField.name]?.[1];
         if (!gid) return;
-        if (!byGroup[gid]) {
-          byGroup[gid] = { id: gid, name: gname, count: 0, sums: {}, _pctSum: {} };
-          monetaryCols.forEach((f) => { byGroup[gid].sums[f.name] = 0; });
-          percentCols.forEach((f) => { byGroup[gid]._pctSum[f.name] = { sum: 0, n: 0 }; });
-        }
-        const bucket = byGroup[gid];
-        bucket.count += 1;
-        monetaryCols.forEach((f) => { bucket.sums[f.name] += Number(r[f.name] || 0); });
-        percentCols.forEach((f) => {
-          bucket._pctSum[f.name].sum += Number(r[f.name] || 0);
-          bucket._pctSum[f.name].n += 1;
-        });
+        if (!byGroup[gid]) byGroup[gid] = { id: gid, name: gname, count: 0, rawRows: [] };
+        byGroup[gid].count += 1;
+        byGroup[gid].rawRows.push(r);
       });
 
       const groups = Object.values(byGroup).map((b) => {
-        const sums = {};
-        monetaryCols.forEach((f) => { sums[f.name] = Math.round(b.sums[f.name] * 100) / 100; });
-        percentCols.forEach((f) => {
-          const { sum, n } = b._pctSum[f.name];
-          sums[f.name] = n ? Math.round((sum / n) * 100) / 100 : 0;
+        const values = {};
+        aggregatable.forEach((f) => {
+          const nums = b.rawRows.map((r) => Number(r[f.name] || 0));
+          const agg = aggregate(nums, aggOf[f.name]);
+          values[f.name] = agg === null ? null : Math.round(agg * 100) / 100;
         });
-        return { id: b.id, name: b.name, count: b.count, values: sums };
+        // Detail rows behind this group, for expand-to-see-individual-
+        // records — same fields as the summary columns, so tapping a
+        // detail row can still show every column the group hides.
+        const detailRows = b.rawRows.map((r) => {
+          const out = { id: r.id };
+          displayFields.forEach((f) => { out[f.name] = r[f.name]; });
+          return out;
+        });
+        return { id: b.id, name: b.name, count: b.count, values, detailRows };
       }).sort((a, b) => a.name.localeCompare(b.name));
 
       const totals = {};
-      monetaryCols.forEach((f) => { totals[f.name] = Math.round(groups.reduce((s, g) => s + (g.values[f.name] || 0), 0) * 100) / 100; });
-      percentCols.forEach((f) => {
-        const withData = groups.filter((g) => g.count > 0);
-        totals[f.name] = withData.length
-          ? Math.round((withData.reduce((s, g) => s + (g.values[f.name] || 0), 0) / withData.length) * 100) / 100
-          : 0;
+      aggregatable.forEach((f) => {
+        const allNums = rows.map((r) => Number(r[f.name] || 0));
+        const agg = aggregate(allNums, aggOf[f.name]);
+        totals[f.name] = agg === null ? null : Math.round(agg * 100) / 100;
       });
 
       return success(res, {
@@ -808,14 +827,16 @@ exports.getScreenData = async (req, res) => {
         model,
         grouped: true,
         groupByLabel: groupField.field_description,
-        columns: [...monetaryCols, ...percentCols].map((f) => ({
-          name: f.name, label: f.field_description,
-          type: monetaryCols.includes(f) ? "monetary" : "percent",
+        columns: displayFields.map((f) => ({
+          name: f.name,
+          label: f.field_description,
+          type: f.ttype === "monetary" ? "monetary" : f.ttype,
+          aggregatable: !!aggOf[f.name],
         })),
         groups,
         totals,
         hasDateFilter: !!dateField,
-        hasCompanyFilter: false, // grouping IS the outlet breakdown — a separate outlet filter would just collapse it to one group
+        hasCompanyFilter: false, // grouping IS the breakdown — a separate outlet filter would just collapse it to one group
       });
     }
 
